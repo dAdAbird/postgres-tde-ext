@@ -10,6 +10,7 @@
 
 #include "utils/rel.h"
 #include "storage/relfilelocator.h"
+#include "access/xlog_internal.h"
 
 #define TDE_FORK_EXT "tde"
 
@@ -56,4 +57,21 @@ extern void pg_tde_create_key_fork(const RelFileLocator *newrlocator, Relation r
 extern RelKeysData *pg_tde_get_keys_from_fork(const RelFileLocator *rlocator);
 extern RelKeysData *GetRelationKeys(RelFileLocator rel);
 const char * tde_sprint_key(InternalKey *k);
+
+/* XLOG stuff */
+#define XLOG_TDE_CREATE_FORK 0x00
+#define RM_TDERMGRS_ID          RM_EXPERIMENTAL_ID
+#define RM_TDERMGRS_NAME        "test_pg_tde_custom_rmgrs"
+
+void            pg_tde_rmgrs_redo(XLogReaderState *record);
+void            pg_tde_rmgrs_desc(StringInfo buf, XLogReaderState *record);
+const char *    pg_tde_rmgrs_identify(uint8 info);
+
+static const RmgrData  pg_tde_rmgr = {
+	.rm_name = RM_TDERMGRS_NAME,
+	.rm_redo = pg_tde_rmgrs_redo,
+	.rm_desc = pg_tde_rmgrs_desc,
+	.rm_identify = pg_tde_rmgrs_identify
+};
+
 #endif                            /* PG_TDE_MAP_H */

@@ -16,6 +16,9 @@
 #include "storage/fd.h"
 #include "utils/wait_event.h"
 #include "utils/memutils.h"
+#include "access/xlog.h"
+#include "access/xlog_internal.h"
+#include "access/xloginsert.h"
 
 #include "access/pg_tde_tdemap.h"
 #include "encryption/enc_aes.h"
@@ -136,6 +139,16 @@ pg_tde_create_key_fork(const RelFileLocator *newrlocator, Relation rel)
                 		key_file_path)));
 	}
 
+	/* XLOG internal keys
+	 * 
+	 * TODO: what if a crash happend after we've created a file and before writing xlog?
+	 */
+	XLogBeginInsert();
+	XLogRegisterData((char *) newrlocator, sizeof(RelFileLocator));
+	// XLogRegisterData((char *) data+MASTER_KEY_NAME_LEN, SizeOfRelKeysData(data->internal_keys_len));
+	XLogRegisterData((char *) &int_key, sizeof(InternalKey));
+	XLogInsert(RM_TDERMGRS_ID, XLOG_TDE_CREATE_FORK);
+
 	/* Register the file for delete in case transaction Aborts */
 	RegisterFileForDeletion(key_file_path, false);
 
@@ -144,6 +157,114 @@ pg_tde_create_key_fork(const RelFileLocator *newrlocator, Relation rel)
 
 	pfree(key_file_path);
 	FileClose(file);
+}
+
+void
+pg_tde_write_key_fork(RelFileLocator *rlocator, InternalKey *key, const char *MasterKeyName)
+{
+	char		*key_file_path;
+	File		file = -1;
+	RelKeysData *data;
+	size_t 		sz;
+
+	key_file_path = pg_tde_get_key_file_path(rlocator);
+    if (!key_file_path)
+        ereport(ERROR,
+                (errmsg("failed to get key file path")));
+
+	file = PathNameOpenFile(key_file_path, O_RDWR | O_CREAT | PG_BINARY);
+	if (file < 0)
+		ereport(FATAL,
+        		(errcode_for_file_access(),
+        		errmsg("could not open tde key file \"%s\": %m",
+				  		key_file_path)));
+
+	/* Allocate in TopMemoryContext and don't pfree sice we add it to
+	 * the cache as well */
+	data = (RelKeysData *) MemoryContextAlloc(TopMemoryContext, SizeOfRelKeysData(1));
+
+	strcpy(data->master_key_name, MasterKeyName);
+	data->internal_key[0] = *key;
+	data->internal_keys_len = 1;
+
+	sz = SizeOfRelKeysData(data->internal_keys_len);
+	/* 
+	 * TODO: internal key(s) should be encrypted
+	 */
+	if (FileWrite(file, data, sz, 0, WAIT_EVENT_DATA_FILE_WRITE) != sz)
+    	ereport(FATAL,
+				(errcode_for_file_access(),
+                errmsg("could not write key data to file \"%s\": %m",
+                		key_file_path)));
+
+	/* Register the file for delete in case transaction Aborts */
+	RegisterFileForDeletion(key_file_path, false);
+
+	/* Add to the cache */
+	put_keys_into_map(rlocator->relNumber, data);
+
+	pfree(key_file_path);
+	FileClose(file);
+}
+
+void
+pg_tde_rmgrs_redo(XLogReaderState *record)
+{
+	char	   *rec = XLogRecGetData(record);
+	uint8		info = XLogRecGetInfo(record) & ~XLR_INFO_MASK;
+	uint32 		rlen = XLogRecGetDataLen(record);
+	RelKeysData 	*keys;
+	RelFileLocator	*rel_loc = (RelFileLocator *) MemoryContextAlloc(TopMemoryContext, sizeof(RelFileLocator));
+	InternalKey 	*int_key = (InternalKey *) MemoryContextAlloc(TopMemoryContext, sizeof(InternalKey));
+
+	if (info == XLOG_TDE_CREATE_FORK)
+	{
+		// if (rlen < SizeOfRelKeysData(1)+sizeof(RelFileLocator) || 
+		// 			(rlen - SizeOfRelKeysDataHeader - sizeof(RelFileLocator)) % sizeof(InternalKey) != 0)
+		// {
+		// 	ereport(FATAL,
+		// 			(errcode(ERRCODE_DATA_CORRUPTED),
+		// 			errmsg("corrupted XLOG_TDE_CREATE_FORK data")));
+		// }
+
+		ereport(DEBUG2, (errmsg(" =====> XLOG_LEN: %u, %lu, %lu ", rlen, sizeof(RelFileLocator), sizeof(InternalKey))));
+
+		// keys = (RelKeysData *) MemoryContextAlloc(TopMemoryContext, rlen - sizeof(RelFileLocator));
+		
+		memcpy((RelFileLocator *) rel_loc, rec, sizeof(RelFileLocator));
+		// memcpy(&keys->internal_keys_len, rec+sizeof(RelFileLocator), rlen - sizeof(RelFileLocator));
+		memcpy(int_key, rec+sizeof(RelFileLocator), sizeof(InternalKey));
+		ereport(DEBUG2, (errmsg(" =====> XLOG_REL: %u, %lu, %lu ", rel_loc->spcOid, rel_loc->dbOid, rel_loc->relNumber)));
+
+		pg_tde_write_key_fork(rel_loc, int_key, "master-key");
+	}
+}
+
+void
+pg_tde_rmgrs_desc(StringInfo buf, XLogReaderState *record)
+{
+	char	   *rec = XLogRecGetData(record);
+	uint8		info = XLogRecGetInfo(record) & ~XLR_INFO_MASK;
+	RelKeysData 	*keys;
+	RelFileLocator	*rel_loc;
+
+	if (info == XLOG_TDE_CREATE_FORK)
+	{
+		// keys = (RelKeysData *) MemoryContextAlloc(TopMemoryContext, XLogRecGetDataLen(record) - sizeof(RelFileLocator));
+		// memcpy(&keys->internal_keys_len, rec+sizeof(RelFileLocator), XLogRecGetDataLen(record) - sizeof(RelFileLocator));
+		// memcpy((RelFileLocator *) rel_loc, rec, sizeof(RelFileLocator));
+		// appendStringInfo(buf, "relation %u.%u.%u: %lu keys", rel_loc->spcOid, rel_loc->dbOid, rel_loc->relNumber, keys->internal_keys_len);
+		appendStringInfo(buf, "relation ");
+	}
+}
+
+const char *
+pg_tde_rmgrs_identify(uint8 info)
+{
+	if ((info & ~XLR_INFO_MASK) == XLOG_TDE_CREATE_FORK)
+		return "TEST_TDE_RMGRS_CREATE_FORK";
+
+	return NULL;
 }
 
 /*
