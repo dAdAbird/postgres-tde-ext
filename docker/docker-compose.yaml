@@ -1,15 +1,16 @@
+# TODO: needs improvements as currentlly ` docker-compose up -d --build` has to be run twice
+# as replication init on secodary doen't work 100% properly
 version: "3.4"
 services:
   pg-primary:
     build:
       dockerfile: ./docker/Dockerfile
       context: ..
-      args:
-        - PG_PRIMARY=true
     environment:
-      # - "POSTGRES_PASSWORD=testpass"
+      - "POSTGRES_PASSWORD=testpass"
       - "PG_PRIMARY=true"
       - "POSTGRES_HOST_AUTH_METHOD=trust"
+      - "PG_REPLICATION=true"
     ports:
       - "5433:5432"
   pg-secondary:
@@ -20,5 +21,6 @@ services:
       - pg-primary
     environment:
       - "POSTGRES_PASSWORD=testpass"
+      - "PG_REPLICATION=true"
     ports:
       - "5434:5432"

@@ -69,5 +69,5 @@ void
     RegisterSubXactCallback(pg_tde_subxact_callback, NULL);
 	SetupTdeDDLHooks();
 
-	RegisterCustomRmgr(RM_TDERMGRS_ID, &pg_tde_rmgr);
+	RegisterCustomRmgr(RM_TDERMGR_ID, &pg_tde_rmgr);
 }

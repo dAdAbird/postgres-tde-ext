@@ -58,20 +58,21 @@ extern RelKeysData *pg_tde_get_keys_from_fork(const RelFileLocator *rlocator);
 extern RelKeysData *GetRelationKeys(RelFileLocator rel);
 const char * tde_sprint_key(InternalKey *k);
 
-/* XLOG stuff */
-#define XLOG_TDE_CREATE_FORK 0x00
-#define RM_TDERMGRS_ID          RM_EXPERIMENTAL_ID
-#define RM_TDERMGRS_NAME        "test_pg_tde_custom_rmgrs"
+/* TDE XLOG resource manager */
+#define XLOG_TDE_CREATE_FORK   0x00
+/* TODO: ID has to be registedred and changed: https://wiki.postgresql.org/wiki/CustomWALResourceManagers */
+#define RM_TDERMGR_ID          RM_EXPERIMENTAL_ID
+#define RM_TDERMGR_NAME        "test_pg_tde_custom_rmgr"
 
-void            pg_tde_rmgrs_redo(XLogReaderState *record);
-void            pg_tde_rmgrs_desc(StringInfo buf, XLogReaderState *record);
-const char *    pg_tde_rmgrs_identify(uint8 info);
+extern void            pg_tde_rmgr_redo(XLogReaderState *record);
+extern void            pg_tde_rmgr_desc(StringInfo buf, XLogReaderState *record);
+extern const char *    pg_tde_rmgr_identify(uint8 info);
 
-static const RmgrData  pg_tde_rmgr = {
-	.rm_name = RM_TDERMGRS_NAME,
-	.rm_redo = pg_tde_rmgrs_redo,
-	.rm_desc = pg_tde_rmgrs_desc,
-	.rm_identify = pg_tde_rmgrs_identify
+static const RmgrData pg_tde_rmgr = {
+	.rm_name = RM_TDERMGR_NAME,
+	.rm_redo = pg_tde_rmgr_redo,
+	.rm_desc = pg_tde_rmgr_desc,
+	.rm_identify = pg_tde_rmgr_identify
 };
 
 #endif                            /* PG_TDE_MAP_H */

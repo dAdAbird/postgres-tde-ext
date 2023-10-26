@@ -28,10 +28,10 @@ pg_tde_crypt(uint64_t start_offset, const char* data, uint32 data_len, char* out
     const uint64_t aes_block_no = start_offset % AES_BLOCK_SIZE;
     unsigned char* encKey;
 
-    ereport(DEBUG2,
+	ereport(DEBUG2,
         (errmsg("%s: start_offset:%llu, data_len: %u data:%p",context?context:"", start_offset,data_len, data)));
 
-    encKey = palloc(AES_BLOCK_SIZE * (aes_end_block - aes_start_block + 1));
+    encKey = malloc(AES_BLOCK_SIZE * (aes_end_block - aes_start_block + 1));
 
     // TODO: verify key length!
     Aes128EncryptedZeroBlocks2(&(keys->internal_key[0].ctx), keys->internal_key[0].key, aes_start_block, aes_end_block, encKey);
@@ -49,7 +49,7 @@ pg_tde_crypt(uint64_t start_offset, const char* data, uint32 data_len, char* out
 #endif
         out[i] = data[i] ^ encKey[aes_block_no + i];
     }
-    pfree(encKey);
+    free(encKey);
 }
 
 void PGTdeCryptTupInternal(Oid tableOid, BlockNumber bn, unsigned long offsetInPage, char* t_data, char* out, unsigned from, unsigned to, RelKeysData* keys)
