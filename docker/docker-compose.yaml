@@ -24,3 +24,13 @@ services:
       - "PG_REPLICATION=true"
     ports:
       - "5434:5432"
+  pg-logical:
+    build:
+      dockerfile: ./docker/Dockerfile
+      context: ..
+    depends_on:
+      - pg-primary
+    environment:
+      - "POSTGRES_PASSWORD=testpass"
+    ports:
+      - "5435:5432"

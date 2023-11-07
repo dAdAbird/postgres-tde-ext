@@ -81,3 +81,5 @@ tests += {
     ],
   },
 }
+
+subdir('src/replication/tdeoutput')

@@ -30,11 +30,11 @@ total_patches_failed=0
 
 declare -a patch_list_unclean=()
 
-declare -a pg_header_file_map=("visibilitymap.h" "rewriteheap.h" "heapam_xlog.h" "hio.h" "heapam.h" "heaptoast.h")
-declare -a tde_header_file_map=("pg_tde_visibilitymap.h" "pg_tde_rewrite.h" "pg_tdeam_xlog.h" "pg_tde_io.h" "pg_tdeam.h" "pg_tdetoast.h")
+declare -a pg_header_file_map=("visibilitymap.h" "rewriteheap.h" "heapam_xlog.h" "hio.h" "heapam.h" "heaptoast.h" "pgoutput.h")
+declare -a tde_header_file_map=("pg_tde_visibilitymap.h" "pg_tde_rewrite.h" "pg_tdeam_xlog.h" "pg_tde_io.h" "pg_tdeam.h" "pg_tdetoast.h" "tdeoutput.h")
 
-declare -a pg_c_file_map=("heapam.c" "heapam_handler.c" "heapam_visibility.c" "heaptoast.c" "hio.c" "pruneheap.c" "rewriteheap.c" "vacuumlazy.c" "visibilitymap.c")
-declare -a tde_c_file_map=("pg_tdeam.c" "pg_tdeam_handler.c" "pg_tdeam_visibility.c" "pg_tdetoast.c" "pg_tde_io.c" "pg_tde_prune.c" "pg_tde_rewrite.c" "pg_tde_vacuumlazy.c" "pg_tde_visibilitymap.c")
+declare -a pg_c_file_map=("heapam.c" "heapam_handler.c" "heapam_visibility.c" "heaptoast.c" "hio.c" "pruneheap.c" "rewriteheap.c" "vacuumlazy.c" "visibilitymap.c" ""pgoutput.c"")
+declare -a tde_c_file_map=("pg_tdeam.c" "pg_tdeam_handler.c" "pg_tdeam_visibility.c" "pg_tdetoast.c" "pg_tde_io.c" "pg_tde_prune.c" "pg_tde_rewrite.c" "pg_tde_vacuumlazy.c" "pg_tde_visibilitymap.c" "tdeoutput.c")
 
 
 ## USAGE

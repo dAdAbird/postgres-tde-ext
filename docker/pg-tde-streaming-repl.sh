@@ -18,3 +18,17 @@ else
     rm -rf  ${PGDATA}/*
     pg_basebackup -h pg-primary -p 5432 -U repl -D ${PGDATA} -Fp -Xs -R
 fi
+
+# --- primary
+# CREATE TABLE t1(a int, b text, PRIMARY KEY(a)) using pg_tde;
+# CREATE PUBLICATION pub1 FOR TABLE t1;
+# SELECT pg_create_logical_replication_slot('pub1_slot', 'tdeoutput');
+# 
+# --- standby
+# CREATE SUBSCRIPTION sub1
+# CONNECTION 'host=localhost dbname=vagrant application_name=sub1'
+# PUBLICATION pub1
+# WITH (create_slot=false, slot_name=pub1_slot);
+# 
+# ---  
+# INSERT INTO t1 VALUES (1, 'one');
