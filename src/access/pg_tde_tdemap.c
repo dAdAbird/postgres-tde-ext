@@ -34,7 +34,7 @@ static const char *MasterKeyName = "master-key";
 
 static inline char* pg_tde_get_key_file_path(const RelFileLocator *newrlocator);
 static void put_keys_into_map(Oid rel_id, RelKeysData *keys);
-static void pg_tde_write_key_fork(const RelFileLocator *rlocator, InternalKey *key, const char *MasterKeyName);
+static void pg_tde_write_key_fork(const RelFileLocator *rlocator, InternalKey *key, InternalKey *keyEnc, const char *MasterKeyName);
 static void pg_tde_xlog_create_fork(XLogReaderState *record);
 
 void
@@ -59,6 +59,7 @@ void
 pg_tde_create_key_fork(const RelFileLocator *newrlocator, Relation rel)
 {
 	InternalKey int_key = {0};
+	InternalKey int_key_enc = {0};
 
 	if (!RAND_bytes(int_key.key, INTERNAL_KEY_LEN))
 	{
@@ -68,11 +69,35 @@ pg_tde_create_key_fork(const RelFileLocator *newrlocator, Relation rel)
                 		RelationGetRelationName(rel), ERR_error_string(ERR_get_error(), NULL))));
 	}
 
+	{
+		const keyInfo 	*master_key_info;
+		unsigned char	dataDec[1024];
+		int				encsz;
+		// TODO: use proper iv stored in the file!
+		unsigned char iv[INTERNAL_KEY_LEN] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
+		master_key_info = keyringGetLatestKey(MasterKeyName);
+		if(master_key_info == NULL)
+		{
+			master_key_info = keyringGenerateKey(MasterKeyName, INTERNAL_KEY_LEN);
+		}
+		if(master_key_info == NULL)
+		{
+			ereport(ERROR,
+					(errmsg("failed to retrieve master key")));
+		}
+		AesDecrypt(master_key_info->data.data, iv, (unsigned char*) &int_key, INTERNAL_KEY_LEN, dataDec, &encsz);
+
+		memcpy(&int_key_enc, dataDec, INTERNAL_KEY_LEN);
+	}
+
+	uint8 mklen = (uint8) strlen(MasterKeyName);
 	/* XLOG internal keys */
 	XLogBeginInsert();
 	XLogRegisterData((char *) newrlocator, sizeof(RelFileLocator));
-	XLogRegisterData((char *) &int_key, sizeof(InternalKey));
+	XLogRegisterData((char *) &mklen, sizeof(uint8));
+	XLogRegisterData((char *) MasterKeyName, strlen(MasterKeyName)+1);
+	XLogRegisterData((char *) &int_key_enc, sizeof(InternalKey));
 	XLogInsert(RM_TDERMGR_ID, XLOG_TDE_CREATE_FORK);
 
 	/* TODO: should DB crash after sending XLog, secondaries would create a fork
@@ -80,11 +105,11 @@ pg_tde_create_key_fork(const RelFileLocator *newrlocator, Relation rel)
 	 * Hence, the *.tde file will remain as garbage on secondaries.
 	 */
 
-	pg_tde_write_key_fork(newrlocator, &int_key, MasterKeyName);
+	pg_tde_write_key_fork(newrlocator, &int_key, &int_key_enc, MasterKeyName);
 }
 
 void
-pg_tde_write_key_fork(const RelFileLocator *rlocator, InternalKey *key, const char *MasterKeyName)
+pg_tde_write_key_fork(const RelFileLocator *rlocator, InternalKey *key, InternalKey *keyEnc, const char *MasterKeyName)
 {
 	char		*key_file_path;
 	File		file = -1;
@@ -92,21 +117,6 @@ pg_tde_write_key_fork(const RelFileLocator *rlocator, InternalKey *key, const ch
 	unsigned char        dataEnc[1024];
 	RelKeysData *encData = dataEnc;
 	size_t 		sz;
-	int			encsz;
-	const keyInfo 	*master_key_info;
-	// TODO: use proper iv stored in the file!
-	unsigned char iv[INTERNAL_KEY_LEN] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-
-	master_key_info = keyringGetLatestKey(MasterKeyName);
-	if(master_key_info == NULL)
-	{
-		master_key_info = keyringGenerateKey(MasterKeyName, INTERNAL_KEY_LEN);
-	}
-	if(master_key_info == NULL)
-	{
-        ereport(ERROR,
-                (errmsg("failed to retrieve master key")));
-	}
 
 	key_file_path = pg_tde_get_key_file_path(rlocator);
 	if (!key_file_path)
@@ -131,7 +141,7 @@ pg_tde_write_key_fork(const RelFileLocator *rlocator, InternalKey *key, const ch
 	sz = SizeOfRelKeysData(data->internal_keys_len);
 	
 	memcpy(dataEnc, data, sz);
-	AesEncrypt(master_key_info->data.data, iv, (unsigned char*)data + SizeOfRelKeysDataHeader, INTERNAL_KEY_LEN, dataEnc + SizeOfRelKeysDataHeader, &encsz);
+	memcpy(dataEnc + SizeOfRelKeysDataHeader, keyEnc, INTERNAL_KEY_LEN);
 
 #if TDE_FORK_DEBUG
 	ereport(DEBUG2,
@@ -396,6 +406,9 @@ pg_tde_xlog_create_fork(XLogReaderState *record)
 	char			*rec = XLogRecGetData(record);
 	RelFileLocator	rlocator;
 	InternalKey 	int_key = {0};
+	InternalKey 	int_key_enc = {0};
+	uint8 			mklen;
+	char			mkname[MASTER_KEY_NAME_LEN];
 
 	if (XLogRecGetDataLen(record) < sizeof(InternalKey)+sizeof(RelFileLocator))
 	{
@@ -404,14 +417,47 @@ pg_tde_xlog_create_fork(XLogReaderState *record)
 				errmsg("corrupted XLOG_TDE_CREATE_FORK data")));
 	}
 
-	/* Format [RelFileLocator][InternalKey] */
+
+	/* Format [RelFileLocator][MasterKeyNameLen][MasterKeyName][InternalKey] */
 	memcpy(&rlocator, rec, sizeof(RelFileLocator));
-	memcpy(&int_key, rec+sizeof(RelFileLocator), sizeof(InternalKey));
+	memcpy(&mklen, rec+sizeof(RelFileLocator), sizeof(mklen));
+	memcpy(&mkname, rec+sizeof(RelFileLocator)+sizeof(mklen), mklen+1);
+	memcpy(&int_key_enc, rec+sizeof(RelFileLocator)+sizeof(mklen)+1+mklen, sizeof(InternalKey));
+
+	elog(INFO, "===> MASTER_KEY_NAME: %s / %d", mkname, mklen);
+
+	{
+		const keyInfo 	*master_key_info;
+		unsigned char        dataDec[1024];
+		int			encsz;
+		// TODO: use proper iv stored in the file!
+		unsigned char iv[INTERNAL_KEY_LEN] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
+		master_key_info = keyringGetLatestKey(mkname);
+		if(master_key_info == NULL)
+		{
+			master_key_info = keyringGenerateKey(mkname, INTERNAL_KEY_LEN);
+		}
+		if(master_key_info == NULL)
+		{
+			ereport(ERROR,
+					(errmsg("failed to retrieve master key")));
+		}
+
+#if TDE_FORK_DEBUG
+		ereport(DEBUG2,
+			(errmsg("fork file master key: %s: %s", master_key_info->name.name, tde_sprint_masterkey(&master_key_info->data))));
+#endif
+
+		AesDecrypt(master_key_info->data.data, iv, (unsigned char*) &int_key_enc, INTERNAL_KEY_LEN, dataDec, &encsz);
+
+		memcpy(&int_key_enc, dataDec, INTERNAL_KEY_LEN);
+	}
 
 #if TDE_FORK_DEBUG
 	ereport(DEBUG2,
 		(errmsg("xlog internal_key: %s", tde_sprint_key(&int_key))));
 #endif
 
-	pg_tde_write_key_fork(&rlocator, &int_key, MasterKeyName);	
+	pg_tde_write_key_fork(&rlocator, &int_key, &int_key_enc, mkname);	
 }
