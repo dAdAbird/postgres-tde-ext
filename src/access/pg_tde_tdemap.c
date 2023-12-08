@@ -451,7 +451,7 @@ pg_tde_xlog_create_fork(XLogReaderState *record)
 
 		AesDecrypt(master_key_info->data.data, iv, (unsigned char*) &int_key_enc, INTERNAL_KEY_LEN, dataDec, &encsz);
 
-		memcpy(&int_key_enc, dataDec, INTERNAL_KEY_LEN);
+		memcpy(&int_key, dataDec, INTERNAL_KEY_LEN);
 	}
 
 #if TDE_FORK_DEBUG
