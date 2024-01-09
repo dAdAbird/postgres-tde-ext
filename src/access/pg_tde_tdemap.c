@@ -34,7 +34,7 @@ static const char *MasterKeyName = "master-key";
 
 static inline char* pg_tde_get_key_file_path(const RelFileLocator *newrlocator);
 static void put_keys_into_map(Oid rel_id, RelKeysData *keys);
-static void pg_tde_write_key_fork(const RelFileLocator *rlocator, InternalKey *key, InternalKey *keyEnc, const char *MasterKeyName);
+static void pg_tde_add_rel_keys(const RelFileLocator *rlocator, InternalKey *key, InternalKey *keyEnc, const char *MasterKeyName);
 static void pg_tde_xlog_create_fork(XLogReaderState *record);
 static void pg_tde_crypt_internal_key(InternalKey *in, InternalKey *out);
 
@@ -72,11 +72,11 @@ pg_tde_create_key_fork(const RelFileLocator *newrlocator, Relation rel)
 
 	pg_tde_crypt_internal_key(&int_key, &int_key_enc);
 
-	uint8 mklen = (uint8) strlen(MasterKeyName);
+	uint8 mkey_len = (uint8) strlen(MasterKeyName);
 	/* XLOG internal keys */
 	XLogBeginInsert();
 	XLogRegisterData((char *) newrlocator, sizeof(RelFileLocator));
-	XLogRegisterData((char *) &mklen, sizeof(uint8));
+	XLogRegisterData((char *) &mkey_len, sizeof(uint8));
 	XLogRegisterData((char *) MasterKeyName, strlen(MasterKeyName)+1);
 	XLogRegisterData((char *) &int_key_enc, sizeof(InternalKey));
 	XLogInsert(RM_TDERMGR_ID, XLOG_TDE_CREATE_FORK);
@@ -86,11 +86,18 @@ pg_tde_create_key_fork(const RelFileLocator *newrlocator, Relation rel)
 	 * Hence, the *.tde file will remain as garbage on secondaries.
 	 */
 
-	pg_tde_write_key_fork(newrlocator, &int_key, &int_key_enc, MasterKeyName);
+	pg_tde_add_rel_keys(newrlocator, &int_key, &int_key_enc, MasterKeyName);
 }
 
+/*
+ * creates a relation key and writers it to the fork file w/ the encrypted internal key
+ * and to the inmemory cache (just a perf optimisation) w/ the unencrypted internal key
+ * 
+ * TODO (andy): I don't like mixing up these two actions here and the need to
+ * pass the enc and unenc key.
+*/
 void
-pg_tde_write_key_fork(const RelFileLocator *rlocator, InternalKey *key, InternalKey *keyEnc, const char *MasterKeyName)
+pg_tde_add_rel_keys(const RelFileLocator *rlocator, InternalKey *key, InternalKey *keyEnc, const char *MasterKeyName)
 {
 	char		*key_file_path;
 	File		file = -1;
@@ -381,8 +388,8 @@ pg_tde_xlog_create_fork(XLogReaderState *record)
 	RelFileLocator	rlocator;
 	InternalKey 	int_key = {0};
 	InternalKey 	int_key_enc = {0};
-	uint8 			mklen;
-	char			mkname[MASTER_KEY_NAME_LEN];
+	uint8 			mkey_len;
+	char			mkey_name[MASTER_KEY_NAME_LEN];
 
 	if (XLogRecGetDataLen(record) < sizeof(InternalKey)+sizeof(RelFileLocator))
 	{
@@ -391,12 +398,11 @@ pg_tde_xlog_create_fork(XLogReaderState *record)
 				errmsg("corrupted XLOG_TDE_CREATE_FORK data")));
 	}
 
-
 	/* Format [RelFileLocator][MasterKeyNameLen][MasterKeyName][InternalKey] */
 	memcpy(&rlocator, rec, sizeof(RelFileLocator));
-	memcpy(&mklen, rec+sizeof(RelFileLocator), sizeof(mklen));
-	memcpy(&mkname, rec+sizeof(RelFileLocator)+sizeof(mklen), mklen+1);
-	memcpy(&int_key_enc, rec+sizeof(RelFileLocator)+sizeof(mklen)+1+mklen, sizeof(InternalKey));
+	memcpy(&mkey_len, rec+sizeof(RelFileLocator), sizeof(mkey_len));
+	memcpy(&mkey_name, rec+sizeof(RelFileLocator)+sizeof(mkey_len), mkey_len+1);
+	memcpy(&int_key_enc, rec+sizeof(RelFileLocator)+sizeof(mkey_len)+1+mkey_len, sizeof(InternalKey));
 
 	pg_tde_crypt_internal_key(&int_key_enc, &int_key);
 
@@ -405,5 +411,5 @@ pg_tde_xlog_create_fork(XLogReaderState *record)
 		(errmsg("xlog internal_key: %s", tde_sprint_key(&int_key))));
 #endif
 
-	pg_tde_write_key_fork(&rlocator, &int_key, &int_key_enc, mkname);	
+	pg_tde_add_rel_keys(&rlocator, &int_key, &int_key_enc, mkey_name);	
 }
