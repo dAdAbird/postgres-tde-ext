@@ -52,5 +52,12 @@ static const XLogSmgr tde_xlog_smgr = {
 };
 
 extern void TDEInitXLogSmgr(void);
+extern void* pg_tde_xlog_insert_rec(void* dest, const void* src, size_t count);
+extern void pg_tde_xlog_start_rec(XLogRecord *record);
+
+static const XLogInsertRec tde_xlog_rec_smgr = {
+	.start = pg_tde_xlog_start_rec,
+	.insert = pg_tde_xlog_insert_rec,
+};
 
 #endif							/* PG_TDE_XLOG_H */
