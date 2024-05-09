@@ -73,10 +73,11 @@ typedef struct TDEMapEntry
 	int32 key_index;
 } TDEMapEntry;
 
-/* Global variables */
-static char db_path[MAXPGPATH] = {0};
-static char db_map_path[MAXPGPATH] = {0};
-static char db_keydata_path[MAXPGPATH] = {0};
+typedef struct TDEMapFilePath
+{
+	char map_path[MAXPGPATH];
+	char keydata_path[MAXPGPATH];
+} TDEMapFilePath;
 
 static void put_key_into_map(Oid rel_id, RelKeyData *key);
 
@@ -84,11 +85,7 @@ static File pg_tde_open_file_basic(char *tde_filename, int fileFlags, bool ignor
 static File pg_tde_file_header_write(char *tde_filename, File tde_file, TDEMasterKeyInfo *master_key_info, off_t *bytes_written);
 static File pg_tde_file_header_read(char *tde_filename, File tde_file, TDEFileHeader *fheader, bool *is_new_file, off_t *bytes_read);
 
-static RelKeyData* tde_create_rel_key(const RelFileLocator *rlocator, InternalKey *key, TDEMasterKeyInfo *master_key_info);
-static RelKeyData *tde_encrypt_rel_key(TDEMasterKey *master_key, RelKeyData *rel_key_data, const RelFileLocator *rlocator);
-static RelKeyData *tde_decrypt_rel_key(TDEMasterKey *master_key, RelKeyData *enc_rel_key_data, const RelFileLocator *rlocator);
-
-static void pg_tde_set_db_file_paths(Oid dbOid);
+static void pg_tde_set_db_file_paths(const RelFileLocator *rlocator, char *map_path, char *keydata_path);
 static File pg_tde_open_file(char *tde_filename, TDEMasterKeyInfo *master_key_info, bool should_fill_info, int fileFlags, bool *is_new_file, off_t *offset);
 
 static int32 pg_tde_write_map_entry(const RelFileLocator *rlocator, char *db_map_path, TDEMasterKeyInfo *master_key_info);
@@ -98,7 +95,7 @@ static bool pg_tde_read_one_map_entry(File map_file, const RelFileLocator *rloca
 
 static void pg_tde_write_keydata(char *db_keydata_path, TDEMasterKeyInfo *master_key_info, int32 key_index, RelKeyData *enc_rel_key_data);
 static void pg_tde_write_one_keydata(File keydata_file, int32 key_index, RelKeyData *enc_rel_key_data);
-static RelKeyData* pg_tde_get_key_from_file(const RelFileLocator *rlocator);
+static RelKeyData* pg_tde_get_key_from_file(const RelFileLocator *rlocator, GenericKeyring *keyring);
 static RelKeyData* pg_tde_read_keydata(char *db_keydata_path, int32 key_index, TDEMasterKey *master_key);
 static RelKeyData* pg_tde_read_one_keydata(File keydata_file, int32 key_index, TDEMasterKey *master_key);
 
@@ -117,7 +114,7 @@ pg_tde_create_key_map_entry(const RelFileLocator *newrlocator, Relation rel)
 	TDEMasterKey *master_key;
 	XLogRelKey xlrec;
 
-	master_key = GetMasterKey();
+	master_key = GetMasterKey(newrlocator->dbOid, newrlocator->spcOid, NULL);
 	if (master_key == NULL)
 	{
 		ereport(ERROR,
@@ -135,7 +132,7 @@ pg_tde_create_key_map_entry(const RelFileLocator *newrlocator, Relation rel)
 	}
 
 	/* Encrypt the key */
-	rel_key_data = tde_create_rel_key(newrlocator, &int_key, &master_key->keyInfo);
+	rel_key_data = tde_create_rel_key(newrlocator->relNumber, &int_key, &master_key->keyInfo);
 	enc_rel_key_data = tde_encrypt_rel_key(master_key, rel_key_data, newrlocator);
 
 	/*
@@ -177,7 +174,29 @@ GetRelationKey(RelFileLocator rel)
 		}
 	}
 
-	key = pg_tde_get_key_from_file(&rel);
+	key = pg_tde_get_key_from_file(&rel, NULL);
+
+	put_key_into_map(rel.relNumber, key);
+
+	return key;
+}
+
+RelKeyData *
+GetInternalKey(RelFileLocator rel, GenericKeyring *keyring)
+{
+	RelKey		*curr;
+	RelKeyData *key;
+
+	Oid rel_id = rel.relNumber;
+	for (curr = tde_rel_key_map; curr != NULL; curr = curr->next)
+	{
+		if (curr->rel_id == rel_id)
+		{
+			return curr->key;
+		}
+	}
+
+	key = pg_tde_get_key_from_file(&rel, keyring);
 
 	put_key_into_map(rel.relNumber, key);
 
@@ -216,8 +235,8 @@ tde_sprint_key(InternalKey *k)
  * Creates a key for a relation identified by rlocator. Returns the newly
  * created key.
  */
-static RelKeyData *
-tde_create_rel_key(const RelFileLocator *rlocator, InternalKey *key, TDEMasterKeyInfo *master_key_info)
+RelKeyData *
+tde_create_rel_key(Oid rel_id, InternalKey *key, TDEMasterKeyInfo *master_key_info)
 {
 	RelKeyData 	*rel_key_data;
 
@@ -228,7 +247,7 @@ tde_create_rel_key(const RelFileLocator *rlocator, InternalKey *key, TDEMasterKe
 	rel_key_data->internal_key.ctx = NULL;
 
 	/* Add to the decrypted key to cache */
-	put_key_into_map(rlocator->relNumber, rel_key_data);
+	put_key_into_map(rel_id, rel_key_data);
 
 	return rel_key_data;
 }
@@ -236,7 +255,7 @@ tde_create_rel_key(const RelFileLocator *rlocator, InternalKey *key, TDEMasterKe
 /*
  * Encrypts a given key and returns the encrypted one.
  */
-static RelKeyData *
+RelKeyData *
 tde_encrypt_rel_key(TDEMasterKey *master_key, RelKeyData *rel_key_data, const RelFileLocator *rlocator)
 {
 	RelKeyData *enc_rel_key_data;
@@ -250,7 +269,7 @@ tde_encrypt_rel_key(TDEMasterKey *master_key, RelKeyData *rel_key_data, const Re
 /*
  * Decrypts a given key and returns the decrypted one.
  */
-static RelKeyData *
+RelKeyData *
 tde_decrypt_rel_key(TDEMasterKey *master_key, RelKeyData *enc_rel_key_data, const RelFileLocator *rlocator)
 {
 	RelKeyData *rel_key_data = NULL;
@@ -261,32 +280,17 @@ tde_decrypt_rel_key(TDEMasterKey *master_key, RelKeyData *enc_rel_key_data, cons
 	return rel_key_data;
 }
 
-/*
- * Sets the global variables so that we don't have to do this again for this
- * backend lifetime.
- */
-static void
-pg_tde_set_db_file_paths(Oid dbOid)
+static inline void
+pg_tde_set_db_file_paths(const RelFileLocator *rlocator, char *map_path, char *keydata_path)
 {
-	/* Return if the values are already set */
-	if (*db_path && *db_map_path && *db_keydata_path)
-		return;
-
-	/* Fill in the values */
-	snprintf(db_path, MAXPGPATH, "%s", GetDatabasePath(dbOid, DEFAULTTABLESPACE_OID));
-
-	/* Set the file nanes for map and keydata */
-	join_path_components(db_map_path, db_path, PG_TDE_MAP_FILENAME);
-	join_path_components(db_keydata_path, db_path, PG_TDE_KEYDATA_FILENAME);
-}
-
-/*
- * Path data clean up once the transaction is done.
- */
-void
-pg_tde_cleanup_path_vars(void)
-{
-	*db_path = *db_map_path = *db_keydata_path = 0;
+	if (map_path)
+		join_path_components(map_path, 
+								GetDatabasePath(rlocator->dbOid, rlocator->spcOid),
+								PG_TDE_MAP_FILENAME);
+	if (keydata_path)
+		join_path_components(keydata_path, 
+								GetDatabasePath(rlocator->dbOid, rlocator->spcOid), 
+								PG_TDE_KEYDATA_FILENAME);
 }
 
 /*
@@ -294,10 +298,17 @@ pg_tde_cleanup_path_vars(void)
  * Returns true if both map and key data files are created.
  */
 void
-pg_tde_delete_tde_files(Oid dbOid)
+pg_tde_delete_tde_files(Oid dbOid, Oid spcOid)
 {
+	char db_map_path[MAXPGPATH] = {0};
+	char db_keydata_path[MAXPGPATH] = {0};
+
 	/* Set the file paths */
-	pg_tde_set_db_file_paths(dbOid);
+	pg_tde_set_db_file_paths(&(RelFileLocator) { 
+									spcOid,
+									dbOid,
+									0},
+								db_map_path, db_keydata_path);
 
 	/* Remove these files without emitting any error */
 	PathNameDeleteTemporaryFile(db_map_path, false);
@@ -321,9 +332,15 @@ pg_tde_save_master_key(TDEMasterKeyInfo *master_key_info)
 	off_t curr_pos = 0;
 	bool is_new_map = false;
 	bool is_new_key_data = false;
+	char		db_map_path[MAXPGPATH] = {0};
+	char		db_keydata_path[MAXPGPATH] = {0};
 
 	/* Set the file paths */
-	pg_tde_set_db_file_paths(master_key_info->databaseId);
+	pg_tde_set_db_file_paths(&(RelFileLocator) { 
+									master_key_info->tablespaceId,
+									master_key_info->databaseId,
+									0}, 
+								db_map_path, db_keydata_path);
 
 	ereport(LOG, (errmsg("pg_tde_save_master_key")));
 
@@ -343,16 +360,22 @@ pg_tde_save_master_key(TDEMasterKeyInfo *master_key_info)
  * a LW_SHARED or higher lock on files before calling this function.
  */
 TDEMasterKeyInfo *
-pg_tde_get_master_key(Oid dbOid)
+pg_tde_get_master_key(Oid dbOid, Oid spcOid)
 {
 	File tde_file = -1;
 	TDEFileHeader fheader;
 	TDEMasterKeyInfo *master_key_info = NULL;
 	bool is_new_file = false;
 	off_t bytes_read = 0;
+	char		db_map_path[MAXPGPATH] = {0};
+	char		db_keydata_path[MAXPGPATH] = {0};
 
 	/* Set the file paths */
-	pg_tde_set_db_file_paths(dbOid);
+	pg_tde_set_db_file_paths(&(RelFileLocator) { 
+									spcOid,
+									dbOid,
+									0},
+								db_map_path, db_keydata_path);
 
 	/*
 	 * Ensuring that we always open the file in binary mode. The caller must
@@ -583,6 +606,8 @@ pg_tde_write_one_map_entry(File map_file, const RelFileLocator *rlocator, int fl
 	/* Add the entry to the file */
 	if (bytes_written != MAP_ENTRY_SIZE)
 	{
+		char db_map_path[MAXPGPATH] = {0};
+		pg_tde_set_db_file_paths(rlocator, db_map_path, NULL);
 		ereport(FATAL,
 				(errcode_for_file_access(),
 					errmsg("Could not write tde map file \"%s\": %m",
@@ -761,8 +786,7 @@ pg_tde_write_one_keydata(File keydata_file, int32 key_index, RelKeyData *enc_rel
 	{
 		ereport(FATAL,
 				(errcode_for_file_access(),
-					errmsg("Could not write tde key data file \"%s\": %m",
-						db_keydata_path)));
+					errmsg("Could not write tde key data file: %m")));
 	}
 }
 
@@ -812,6 +836,12 @@ pg_tde_read_one_keydata(File keydata_file, int32 key_index, TDEMasterKey *master
 	/* Check if the file has a valid key */
 	if ((read_pos + INTERNAL_KEY_LEN) > FileSize(keydata_file))
 	{
+		char db_keydata_path[MAXPGPATH] = {0};
+		pg_tde_set_db_file_paths(&(RelFileLocator) { 
+										master_key->keyInfo.tablespaceId,
+										master_key->keyInfo.databaseId,
+										0},
+									NULL, db_keydata_path);
 		ereport(FATAL,
 				(errcode(ERRCODE_NO_DATA_FOUND),
 					errmsg("Could not find the required key at index %d in tde data file \"%s\": %m",
@@ -822,6 +852,12 @@ pg_tde_read_one_keydata(File keydata_file, int32 key_index, TDEMasterKey *master
 	/* Read the encrypted key */
 	if (FileRead(keydata_file, &(enc_rel_key_data->internal_key), INTERNAL_KEY_LEN, read_pos, WAIT_EVENT_DATA_FILE_READ) != INTERNAL_KEY_LEN)
 	{
+		char db_keydata_path[MAXPGPATH] = {0};
+		pg_tde_set_db_file_paths(&(RelFileLocator) { 
+										master_key->keyInfo.tablespaceId,
+										master_key->keyInfo.databaseId,
+										0},
+									NULL, db_keydata_path);
 		ereport(FATAL,
 				(errcode_for_file_access(),
 					errmsg("Could not read key at index %d in tde key data file \"%s\": %m",
@@ -842,13 +878,15 @@ pg_tde_read_one_keydata(File keydata_file, int32 key_index, TDEMasterKey *master
 void
 pg_tde_write_key_map_entry(const RelFileLocator *rlocator, RelKeyData *enc_rel_key_data, TDEMasterKeyInfo *master_key_info)
 {
-	int32 key_index = 0;
-	LWLock *lock_files = tde_lwlock_mk_files();
+	int32	key_index = 0;
+	LWLock	*lock_files = tde_lwlock_mk_files();
+	char	db_map_path[MAXPGPATH] = {0};
+	char	db_keydata_path[MAXPGPATH] = {0};
 
 	Assert(rlocator);
 
 	/* Set the file paths */
-	pg_tde_set_db_file_paths(rlocator->dbOid);
+	pg_tde_set_db_file_paths(rlocator, db_map_path, db_keydata_path);
 
 	/* Create the map entry and then add the encrypted key to the data file */
 	LWLockAcquire(lock_files, LW_EXCLUSIVE);
@@ -866,14 +904,16 @@ pg_tde_write_key_map_entry(const RelFileLocator *rlocator, RelKeyData *enc_rel_k
 void
 pg_tde_delete_key_map_entry(const RelFileLocator *rlocator)
 {
-	int32 key_index = 0;
-	off_t offset = 0;
-	LWLock *lock_files = tde_lwlock_mk_files();
+	int32	key_index = 0;
+	off_t	offset = 0;
+	LWLock	*lock_files = tde_lwlock_mk_files();
+	char	db_map_path[MAXPGPATH] = {0};
+	char	db_keydata_path[MAXPGPATH] = {0};
 
 	Assert(rlocator);
 
 	/* Get the file paths */
-	pg_tde_set_db_file_paths(rlocator->dbOid);
+	pg_tde_set_db_file_paths(rlocator, db_map_path, db_keydata_path);
 
 	/* Remove the map entry if found */
 	LWLockAcquire(lock_files, LW_EXCLUSIVE);
@@ -909,13 +949,15 @@ pg_tde_delete_key_map_entry(const RelFileLocator *rlocator)
 void
 pg_tde_free_key_map_entry(const RelFileLocator *rlocator, off_t offset)
 {
-	int32 key_index = 0;
-	LWLock *lock_files = tde_lwlock_mk_files();
+	int32	key_index = 0;
+	LWLock	*lock_files = tde_lwlock_mk_files();
+	char	db_map_path[MAXPGPATH] = {0};
+	char	db_keydata_path[MAXPGPATH] = {0};
 
 	Assert(rlocator);
 
 	/* Get the file paths */
-	pg_tde_set_db_file_paths(rlocator->dbOid);
+	pg_tde_set_db_file_paths(rlocator, db_map_path, db_keydata_path);
 
 	/* Remove the map entry if found */
 	LWLockAcquire(lock_files, LW_EXCLUSIVE);
@@ -939,21 +981,23 @@ pg_tde_free_key_map_entry(const RelFileLocator *rlocator, off_t offset)
  * reads the key data from the keydata file.
  */
 static RelKeyData *
-pg_tde_get_key_from_file(const RelFileLocator *rlocator)
+pg_tde_get_key_from_file(const RelFileLocator *rlocator, GenericKeyring *keyring)
 {
-	int32 key_index = 0;
-	TDEMasterKey *master_key;
-	RelKeyData *rel_key_data;
-	RelKeyData *enc_rel_key_data;
-	off_t offset = 0;
-	LWLock *lock_files = tde_lwlock_mk_files();
+	int32		key_index = 0;
+	TDEMasterKey	*master_key;
+	RelKeyData	*rel_key_data;
+	RelKeyData	*enc_rel_key_data;
+	off_t		offset = 0;
+	LWLock		*lock_files = tde_lwlock_mk_files();
+	char		db_map_path[MAXPGPATH] = {0};
+	char		db_keydata_path[MAXPGPATH] = {0};
 
 	Assert(rlocator);
 
 	LWLockAcquire(lock_files, LW_SHARED);
 
 	/* Get/generate a master, create the key for relation and get the encrypted key with bytes to write */
-	master_key = GetMasterKey();
+	master_key = GetMasterKey(rlocator->dbOid, rlocator->spcOid, keyring);
 	if (master_key == NULL)
 	{
 		LWLockRelease(lock_files);
@@ -962,7 +1006,7 @@ pg_tde_get_key_from_file(const RelFileLocator *rlocator)
 	}
 
 	/* Get the file paths */
-	pg_tde_set_db_file_paths(rlocator->dbOid);
+	pg_tde_set_db_file_paths(rlocator, db_map_path, db_keydata_path);
 
 	/* Read the map entry and get the index of the relation key */
 	key_index = pg_tde_process_map_entry(rlocator, db_map_path, &offset, false);
@@ -1035,12 +1079,18 @@ pg_tde_perform_rotate_key(TDEMasterKey *master_key, TDEMasterKey *new_master_key
 	off_t map_size;
 	off_t keydata_size;
 	XLogMasterKeyRotate *xlrec;
-	off_t xlrec_size;
-	LWLock *lock_files = tde_lwlock_mk_files();
-	LWLock *lock_cache = tde_lwlock_mk_cache();
+	off_t		xlrec_size;
+	LWLock		*lock_files = tde_lwlock_mk_files();
+	LWLock		*lock_cache = tde_lwlock_mk_cache();
+	char		db_map_path[MAXPGPATH] = {0};
+	char		db_keydata_path[MAXPGPATH] = {0};
 
 	/* Set the file paths */
-	pg_tde_set_db_file_paths(master_key->keyInfo.databaseId);
+	pg_tde_set_db_file_paths(&(RelFileLocator) { 
+									master_key->keyInfo.tablespaceId,
+									master_key->keyInfo.databaseId,
+									0}, 
+								db_map_path, db_keydata_path);
 
 	/* Let's update the pathnames in the local variable for ease of use/readability */
 	strncpy(m_path[OLD_MASTER_KEY], db_map_path, MAXPGPATH);
@@ -1144,21 +1194,27 @@ bool
 pg_tde_write_map_keydata_files(off_t map_size, char *m_file_data, off_t keydata_size, char *k_file_data)
 {
 	TDEFileHeader *fheader;
-	char m_path_new[MAXPGPATH];
-	char k_path_new[MAXPGPATH];
-	File m_file_new;
-	File k_file_new;
-	bool is_new_file;
-	off_t curr_pos = 0;
-	off_t read_pos_tmp = 0;
-	LWLock *lock_files = tde_lwlock_mk_files();
-	LWLock *lock_cache = tde_lwlock_mk_cache();
+	char	m_path_new[MAXPGPATH];
+	char	k_path_new[MAXPGPATH];
+	File	m_file_new;
+	File	k_file_new;
+	bool	is_new_file;
+	off_t	curr_pos = 0;
+	off_t	read_pos_tmp = 0;
+	LWLock	*lock_files = tde_lwlock_mk_files();
+	LWLock	*lock_cache = tde_lwlock_mk_cache();
+	char	db_map_path[MAXPGPATH] = {0};
+	char	db_keydata_path[MAXPGPATH] = {0};
 
 	/* Let's get the header. Buff should start with the map file header. */
 	fheader = (TDEFileHeader *) m_file_data;
 
 	/* Set the file paths */
-	pg_tde_set_db_file_paths(fheader->master_key_info.databaseId);
+	pg_tde_set_db_file_paths(&(RelFileLocator) { 
+									fheader->master_key_info.tablespaceId,
+									fheader->master_key_info.databaseId,
+									0}, 
+								db_map_path, db_keydata_path);
 
 	LWLockAcquire(lock_files, LW_EXCLUSIVE);
 	LWLockAcquire(lock_cache, LW_EXCLUSIVE);

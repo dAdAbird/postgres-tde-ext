@@ -57,5 +57,6 @@ typedef struct VaultV2Keyring
 extern List *GetAllKeyringProviders(void);
 extern GenericKeyring *GetKeyProviderByName(const char *provider_name);
 extern GenericKeyring *GetKeyProviderByID(int provider_id);
+extern ProviderType get_keyring_provider_from_typename(char *provider_type);
 
 #endif /*TDE_KEYRING_H*/
