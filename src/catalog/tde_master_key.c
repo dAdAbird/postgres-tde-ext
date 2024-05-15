@@ -213,7 +213,7 @@ save_master_key_info(TDEMasterKeyInfo *master_key_info)
  * throws an error.
  */
 TDEMasterKey *
-GetMasterKey(Oid dbOid, Oid, spcOid, GenericKeyring *keyring)
+GetMasterKey(Oid dbOid, Oid spcOid, GenericKeyring *keyring)
 {
     TDEMasterKey *masterKey = NULL;
     TDEMasterKeyInfo *masterKeyInfo = NULL;
@@ -252,8 +252,8 @@ GetMasterKey(Oid dbOid, Oid, spcOid, GenericKeyring *keyring)
         LWLockRelease(lock_cache);
         LWLockRelease(lock_files);
 
-        ereport(ERROR,
-                (errmsg("Master key does not exists for the database"),
+        ereport(PANIC,
+                (errmsg("Master key does not exists for the database %u/%u", dbOid, spcOid),
                  errhint("Use set_master_key interface to set the master key")));
         return NULL;
     }
@@ -339,6 +339,7 @@ set_master_key_with_keyring(const char *key_name, GenericKeyring *keyring,
 
         masterKey = palloc(sizeof(TDEMasterKey));
         masterKey->keyInfo.databaseId = dbOid;
+        masterKey->keyInfo.tablespaceId = spcOid;
         masterKey->keyInfo.keyId.version = DEFAULT_MASTER_KEY_VERSION;
         masterKey->keyInfo.keyringId = keyring->key_id;
         strncpy(masterKey->keyInfo.keyId.name, key_name, TDE_KEY_NAME_LEN);
@@ -364,9 +365,9 @@ set_master_key_with_keyring(const char *key_name, GenericKeyring *keyring,
         save_master_key_info(&masterKey->keyInfo);
 
         /* XLog the new key*/
-        XLogBeginInsert();
-	    XLogRegisterData((char *) &masterKey->keyInfo, sizeof(TDEMasterKeyInfo));
-	    XLogInsert(RM_TDERMGR_ID, XLOG_TDE_ADD_MASTER_KEY);
+        // XLogBeginInsert();
+	    // XLogRegisterData((char *) &masterKey->keyInfo, sizeof(TDEMasterKeyInfo));
+	    // XLogInsert(RM_TDERMGR_ID, XLOG_TDE_ADD_MASTER_KEY);
         
         push_master_key_to_cache(masterKey);
     }
@@ -393,7 +394,10 @@ set_master_key_with_keyring(const char *key_name, GenericKeyring *keyring,
 bool
 SetMasterKey(const char *key_name, const char *provider_name, bool ensure_new_key)
 {
-    TDEMasterKey *master_key = set_master_key_with_keyring(key_name, GetKeyProviderByName(provider_name), ensure_new_key);
+    TDEMasterKey *master_key = set_master_key_with_keyring(key_name, 
+                                        GetKeyProviderByName(provider_name), 
+                                        MyDatabaseId, MyDatabaseTableSpace, 
+                                        ensure_new_key);
 
     return (master_key != NULL);
 }

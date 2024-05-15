@@ -85,7 +85,6 @@ static File pg_tde_open_file_basic(char *tde_filename, int fileFlags, bool ignor
 static File pg_tde_file_header_write(char *tde_filename, File tde_file, TDEMasterKeyInfo *master_key_info, off_t *bytes_written);
 static File pg_tde_file_header_read(char *tde_filename, File tde_file, TDEFileHeader *fheader, bool *is_new_file, off_t *bytes_read);
 
-static void pg_tde_set_db_file_paths(const RelFileLocator *rlocator, char *map_path, char *keydata_path);
 static File pg_tde_open_file(char *tde_filename, TDEMasterKeyInfo *master_key_info, bool should_fill_info, int fileFlags, bool *is_new_file, off_t *offset);
 
 static int32 pg_tde_write_map_entry(const RelFileLocator *rlocator, char *db_map_path, TDEMasterKeyInfo *master_key_info);
@@ -280,7 +279,7 @@ tde_decrypt_rel_key(TDEMasterKey *master_key, RelKeyData *enc_rel_key_data, cons
 	return rel_key_data;
 }
 
-static inline void
+inline void
 pg_tde_set_db_file_paths(const RelFileLocator *rlocator, char *map_path, char *keydata_path)
 {
 	if (map_path)
@@ -421,7 +420,7 @@ pg_tde_open_file_basic(char *tde_filename, int fileFlags, bool ignore_missing)
 	tde_file = PathNameOpenFile(tde_filename, fileFlags | PG_BINARY);
 	if (tde_file < 0 && !(errno == ENOENT && ignore_missing == true))
 	{
-		ereport(ERROR,
+		ereport(PANIC,
 				(errcode_for_file_access(),
 				 errmsg("Could not open tde file \"%s\": %m",
 						tde_filename)));

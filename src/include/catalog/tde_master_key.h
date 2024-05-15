@@ -68,7 +68,7 @@ extern LWLock *tde_lwlock_mk_cache(void);
 extern bool save_master_key_info(TDEMasterKeyInfo *masterKeyInfo);
 
 extern Oid GetMasterKeyProviderId(void);
-extern TDEMasterKey* GetMasterKey(Oid dbOid, Oid, spcOid, GenericKeyring *keyring);
+extern TDEMasterKey* GetMasterKey(Oid dbOid, Oid spcOid, GenericKeyring *keyring);
 extern bool SetMasterKey(const char *key_name, const char *provider_name, bool ensure_new_key);
 extern bool RotateMasterKey(const char *new_key_name, const char *new_provider_name, bool ensure_new_key);
 extern bool xl_tde_perform_rotate_key(XLogMasterKeyRotate *xlrec);

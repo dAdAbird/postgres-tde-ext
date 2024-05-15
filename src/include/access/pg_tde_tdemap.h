@@ -23,7 +23,7 @@
 #define GLOBAL_DATA_TDE_OID	607 /* Global objects fake "db" */
 #define XLOG_TDE_OID        608
 
-#define GLOBAL_SPACE_RLOCATOR(_obj_oid) (RelFileLocator) {GLOBALTABLESPACE_OID, GLOBAL_DATA_TDE_OID, _obj_oid}
+#define GLOBAL_SPACE_RLOCATOR(_obj_oid) (RelFileLocator) {GLOBALTABLESPACE_OID, 0, _obj_oid}
 
 typedef struct InternalKey
 {
@@ -63,7 +63,7 @@ extern void pg_tde_delete_key_map_entry(const RelFileLocator *rlocator);
 extern void pg_tde_free_key_map_entry(const RelFileLocator *rlocator, off_t offset);
 
 extern RelKeyData *GetRelationKey(RelFileLocator rel);
-extern RelKeyData *GetInternalKey(RelFileLocator rel, GenericKeyring *keyring)
+extern RelKeyData *GetInternalKey(RelFileLocator rel, GenericKeyring *keyring);
 
 extern void pg_tde_delete_tde_files(Oid dbOid, Oid spcOid);
 
@@ -74,6 +74,8 @@ extern bool pg_tde_write_map_keydata_files(off_t map_size, char *m_file_data, of
 extern RelKeyData* tde_create_rel_key(Oid rel_id, InternalKey *key, TDEMasterKeyInfo *master_key_info);
 extern RelKeyData *tde_encrypt_rel_key(TDEMasterKey *master_key, RelKeyData *rel_key_data, const RelFileLocator *rlocator);
 extern RelKeyData *tde_decrypt_rel_key(TDEMasterKey *master_key, RelKeyData *enc_rel_key_data, const RelFileLocator *rlocator);
+
+extern void pg_tde_set_db_file_paths(const RelFileLocator *rlocator, char *map_path, char *keydata_path);
 
 const char * tde_sprint_key(InternalKey *k);
 

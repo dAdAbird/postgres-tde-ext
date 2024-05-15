@@ -54,6 +54,12 @@ typedef struct VaultV2Keyring
 	char vault_mount_path[MAXPGPATH];
 } VaultV2Keyring;
 
+typedef union KeyringProviders
+{
+	FileKeyring file;
+	VaultV2Keyring vault;
+} KeyringProviders;
+
 extern List *GetAllKeyringProviders(void);
 extern GenericKeyring *GetKeyProviderByName(const char *provider_name);
 extern GenericKeyring *GetKeyProviderByID(int provider_id);
