@@ -365,10 +365,10 @@ set_master_key_with_keyring(const char *key_name, GenericKeyring *keyring,
         save_master_key_info(&masterKey->keyInfo);
 
         /* XLog the new key*/
-        // XLogBeginInsert();
-	    // XLogRegisterData((char *) &masterKey->keyInfo, sizeof(TDEMasterKeyInfo));
-	    // XLogInsert(RM_TDERMGR_ID, XLOG_TDE_ADD_MASTER_KEY);
-        
+        XLogBeginInsert();
+	    XLogRegisterData((char *) &masterKey->keyInfo, sizeof(TDEMasterKeyInfo));
+	    XLogInsert(RM_TDERMGR_ID, XLOG_TDE_ADD_MASTER_KEY);
+
         push_master_key_to_cache(masterKey);
     }
 

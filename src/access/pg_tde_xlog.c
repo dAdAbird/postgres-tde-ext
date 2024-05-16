@@ -24,17 +24,14 @@
 
 #include "access/pg_tde_tdemap.h"
 #include "access/pg_tde_xlog.h"
-#include "catalog/tde_keyring.h"
-#include "catalog/tde_master_key.h"
+#include "catalog/tde_global_catalog.h"
 #include "encryption/enc_tde.h"
 
 
 static char *TDEXLogEncryptBuf = NULL;
-bool EncryptXLog = false;
 
 /* GUC */
-static char *KRingProviderType = NULL;
-static char *KRingProviderFilePath = NULL;
+static bool EncryptXLog = false;
 
 static XLogPageHeaderData EncryptCurrentPageHrd;
 static XLogPageHeaderData DecryptCurrentPageHrd;
@@ -52,15 +49,15 @@ typedef enum
 } GlobalCatalogKeyTypes;
 
 /* TODO: move TDEXLogEncryptBuf here*/
-typedef struct XLogEncryptionState
+typedef struct EncryptionStateData
 {
 	GenericKeyring *keyring;
 	/* TODO: locking */
 	TDEMasterKey master_keys[TDE_GCAT_KEYS_COUNT];
 
-} XLogEncryptionState;
+} EncryptionStateData;
 
-static XLogEncryptionState *EncryptionState = NULL;
+static EncryptionStateData *EncryptionState = NULL;
 
 /*
  * TDE fork XLog
@@ -151,50 +148,6 @@ pg_tde_rmgr_identify(uint8 info)
  * XLog Storage Manager
  */
 
-static GenericKeyring *xlog_keyring;
-
-static void
-pg_tde_init_xlog_kring(void)
-{
-	EncryptionState->keyring->type = get_keyring_provider_from_typename(KRingProviderType);
-	switch (EncryptionState->keyring->type)
-	{
-		case FILE_KEY_PROVIDER:
-			FileKeyring *kring = (FileKeyring *) EncryptionState->keyring;
-			strncpy(kring->file_name, KRingProviderFilePath, sizeof(kring->file_name));
-			break;
-	}
-}
-
-static void
-pg_tde_create_xlog_key(void)
-{
-	InternalKey		int_key;
-	RelKeyData		*rel_key_data;
-	RelKeyData		*enc_rel_key_data;
-	RelFileLocator	*rlocator = &GLOBAL_SPACE_RLOCATOR(XLOG_TDE_OID);
-	TDEMasterKey 	*master_key;
-
-    master_key = set_master_key_with_keyring("xlog-master-key", xlog_keyring, 
-									rlocator->dbOid, rlocator->spcOid, false);
-
-	memset(&int_key, 0, sizeof(InternalKey));
-
-	if (!RAND_bytes(int_key.key, INTERNAL_KEY_LEN))
-	{
-		ereport(FATAL,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("could not generate internal key for \"WAL\": %s",
-                		ERR_error_string(ERR_get_error(), NULL))));
-	}
-
-	rel_key_data = tde_create_rel_key(rlocator->relNumber, &int_key, &master_key->keyInfo);
-	enc_rel_key_data = tde_encrypt_rel_key(master_key, rel_key_data, rlocator);
-
-	pg_tde_write_key_map_entry(rlocator, enc_rel_key_data, &master_key->keyInfo);
-	memcpy(EncryptionState->master_keys + TDE_GCAT_KEY_XLOG, master_key, sizeof(TDEMasterKey));
-}
-
 void
 xlogInitGUC(void)
 {
@@ -208,28 +161,6 @@ xlogInitGUC(void)
 							 NULL,	/* check_hook */
 							 NULL,	/* assign_hook */
 							 NULL	/* show_hook */
-		);
-	DefineCustomStringVariable("pg_tde.wal_keyring_type",
-							   "Keyring type for XLog",
-							   NULL,
-							   &KRingProviderType,
-							   NULL,
-							   PGC_POSTMASTER,
-							   0,	/* no flags required */
-							   NULL,
-							   NULL,
-							   NULL
-		);
-	DefineCustomStringVariable("pg_tde.wal_keyring_file_path",
-							   "Keyring file options for XLog",
-							   NULL,
-							   &KRingProviderFilePath,
-							   NULL,
-							   PGC_POSTMASTER,
-							   0,	/* no flags required */
-							   NULL,
-							   NULL,
-							   NULL
 		);
 }
 
@@ -258,17 +189,6 @@ TDEXLogEncryptBuffSize()
 	return (Size) XLOG_BLCKSZ * xbuffers;
 }
 
-Size
-XLogEncStateSize()
-{
-	Size size;
-
-	size = sizeof(XLogEncryptionState);
-	size = add_size(size, sizeof(KeyringProviders));
-
-	return MAXALIGN(size);
-}
-
 /* 
  * Alloc memory for the encryption buffer.
  * 
@@ -283,7 +203,6 @@ void
 TDEXLogShmemInit(void)
 {
 	bool	foundBuf;
-	char	*allocptr;
 
 	if (EncryptXLog)
 	{
@@ -295,28 +214,13 @@ TDEXLogShmemInit(void)
 
 		elog(DEBUG1, "pg_tde: initialized encryption buffer %lu bytes", XLOG_TDE_ENC_BUFF_ALIGNED_SIZE);
 	}
-
-	EncryptionState = (XLogEncryptionState *)
-			ShmemInitStruct("TDE XLog Encryption State",
-									XLogEncStateSize(), &foundBuf);
-
-	allocptr = ((char *) EncryptionState) + MAXALIGN(sizeof(XLogEncryptionState));
-	EncryptionState->keyring = allocptr;
 }
 
 void
 TDEInitXLogSmgr(void)
 {
 	SetXLogSmgr(&tde_xlog_smgr);
-	pg_tde_init_xlog_kring();
-	pg_tde_create_xlog_key();
 }
-
-/* 
- * TODO: proper key management
- *		 where to store refs to the master and internal keys?
- */
-static InternalKey XLogInternalKey = {.key = {0xD,}};
 
 ssize_t
 pg_tde_xlog_seg_write(int fd, const void *buf, size_t count, off_t offset)
@@ -337,7 +241,6 @@ TDEXLogWriteEncryptedPages(int fd, const void *buf, size_t count, off_t offset)
 	size_t	data_size = 0;
 	XLogPageHeader	curr_page_hdr = &EncryptCurrentPageHrd;
 	XLogPageHeader	enc_buf_page;
-	// RelKeyData		key = {.internal_key = XLogInternalKey};
 	RelKeyData		*key = NULL;
 	off_t	enc_off;
 	size_t	page_size = XLOG_BLCKSZ - offset % XLOG_BLCKSZ;
@@ -429,7 +332,6 @@ pg_tde_xlog_seg_read(int fd, void *buf, size_t count, off_t offset)
 	char	iv_prefix[16] = {0,};
 	size_t	data_size = 0;
 	XLogPageHeader	curr_page_hdr = &DecryptCurrentPageHrd;
-	// RelKeyData		key = {.internal_key = XLogInternalKey};
 	RelKeyData		*key = NULL;
 	size_t	page_size = XLOG_BLCKSZ - offset % XLOG_BLCKSZ;
 	off_t	dec_off;
@@ -439,15 +341,6 @@ pg_tde_xlog_seg_read(int fd, void *buf, size_t count, off_t offset)
 	elog(DEBUG1, "read from a WAL segment, pages amount: %d, size: %lu offset: %ld", count / (Size) XLOG_BLCKSZ, count, offset);
 #endif
 
-	pg_tde_init_xlog_kring();
-	{
-		char		db_map_path[MAXPGPATH] = {0};
-
-		pg_tde_set_db_file_paths(&GLOBAL_SPACE_RLOCATOR(XLOG_TDE_OID),
-									db_map_path, NULL);
-		if (access(db_map_path, F_OK) == -1)
-			pg_tde_create_xlog_key();
-	}
 	key = GetInternalKey(GLOBAL_SPACE_RLOCATOR(XLOG_TDE_OID), xlog_keyring);
 
 	readsz = pg_pread(fd, buf, count, offset);
