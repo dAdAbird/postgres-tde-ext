@@ -13,6 +13,7 @@
 
 #include "postgres.h"
 
+#include "catalog/tde_master_key.h"
 
 /* 
  * Needed for glogbal data (WAL etc) keys identification in caches and storage.
@@ -25,7 +26,12 @@
 #define GLOBAL_SPACE_RLOCATOR(_obj_oid) (RelFileLocator) {GLOBALTABLESPACE_OID, 0, _obj_oid}
 
 extern void TDEGlCatInitGUC(void);
-extern Size TDEGlCatEncStateSize();
+extern Size TDEGlCatEncStateSize(void);
 extern void TDEGlCatShmemInit(void);
+extern void TDEGlCatKeyInit(void);
+
+extern TDEMasterKey *TDEGetGlCatKeyFromCache(void);
+extern void TDEPutGlCatKeyInCache(TDEMasterKey *mkey);
+extern RelKeyData *GetGlCatInternalKey(Oid obj_id);
 
 #endif /*TDE_GLOBAL_CATALOG_H*/

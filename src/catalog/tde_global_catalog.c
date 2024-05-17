@@ -12,10 +12,17 @@
 
 #include "postgres.h"
 
+#include "storage/shmem.h"
+#include "utils/guc.h"
+
 #include "access/pg_tde_tdemap.h"
 #include "catalog/tde_global_catalog.h"
 #include "catalog/tde_keyring.h"
 #include "catalog/tde_master_key.h"
+
+#include <openssl/rand.h>
+#include <openssl/err.h>
+#include <sys/time.h>
 
 typedef enum
 {
@@ -28,8 +35,7 @@ typedef enum
 typedef struct EncryptionStateData
 {
 	GenericKeyring *keyring;
-	/* TODO: locking */
-	TDEMasterKey master_keys[TDE_GCAT_KEYS_COUNT];
+	TDEMasterKey 	master_keys[TDE_GCAT_KEYS_COUNT];
 } EncryptionStateData;
 
 static EncryptionStateData *EncryptionState = NULL;
@@ -38,14 +44,17 @@ static EncryptionStateData *EncryptionState = NULL;
 static char *KRingProviderType = NULL;
 static char *KRingProviderFilePath = NULL;
 
-static void create_gl_catalog_key(void);
+static void init_gl_catalog_keys(void);
 static void init_keyring(void);
+static TDEMasterKey *create_master_key(const char *key_name,
+					GenericKeyring *keyring, Oid dbOid, Oid spcOid,
+					bool ensure_new_key);
 
 void
 TDEGlCatInitGUC(void)
 {
 	DefineCustomStringVariable("pg_tde.global_keyring_type",
-							   "Keyring type for XLog",
+							   "Keyring type for global catalog",
 							   NULL,
 							   &KRingProviderType,
 							   NULL,
@@ -56,7 +65,7 @@ TDEGlCatInitGUC(void)
 							   NULL
 		);
 	DefineCustomStringVariable("pg_tde.global_keyring_file_path",
-							   "Keyring file options for XLog",
+							   "Keyring file options for global catalog",
 							   NULL,
 							   &KRingProviderFilePath,
 							   NULL,
@@ -70,7 +79,7 @@ TDEGlCatInitGUC(void)
 
 
 Size
-TDEGlCatEncStateSize()
+TDEGlCatEncStateSize(void)
 {
 	Size size;
 
@@ -85,25 +94,54 @@ TDEGlCatShmemInit(void)
 {
 	bool	foundBuf;
 	char	*allocptr;
-	char	db_map_path[MAXPGPATH] = {0};
 
 	EncryptionState = (EncryptionStateData *)
 			ShmemInitStruct("TDE XLog Encryption State",
-									XLogEncStateSize(), &foundBuf);
+									TDEGlCatEncStateSize(), &foundBuf);
 
 	allocptr = ((char *) EncryptionState) + MAXALIGN(sizeof(EncryptionStateData));
-	EncryptionState->keyring = allocptr;
+	EncryptionState->keyring = (GenericKeyring *) allocptr;
 	memset(EncryptionState->keyring, 0, sizeof(KeyringProviders));
-	memset(EncryptionState->master_keys, 0, TDEMasterKey * TDE_GCAT_KEYS_COUNT);
-	
+	memset(EncryptionState->master_keys, 0, sizeof(TDEMasterKey) * TDE_GCAT_KEYS_COUNT);
+}
+
+void
+TDEGlCatKeyInit(void)
+{
+	char	db_map_path[MAXPGPATH] = {0};
+
 	init_keyring();
 
 	pg_tde_set_db_file_paths(&GLOBAL_SPACE_RLOCATOR(XLOG_TDE_OID),
 							db_map_path, NULL);
 	if (access(db_map_path, F_OK) == -1)
 	{
-		create_gl_catalog_key();
+		init_gl_catalog_keys();
 	}
+}
+
+TDEMasterKey *
+TDEGetGlCatKeyFromCache(void)
+{
+	TDEMasterKey *mkey;
+	
+	mkey = &EncryptionState->master_keys[TDE_GCAT_KEY_XLOG];
+	if (mkey->keyLength == 0)
+		return NULL;
+
+	return mkey;
+}
+
+void
+TDEPutGlCatKeyInCache(TDEMasterKey *mkey)
+{
+	memcpy(EncryptionState->master_keys + TDE_GCAT_KEY_XLOG, mkey, sizeof(TDEMasterKey));
+}
+
+RelKeyData *
+GetGlCatInternalKey(Oid obj_id)
+{
+	return GetInternalKey(GLOBAL_SPACE_RLOCATOR(obj_id), EncryptionState->keyring);
 }
 
 static void
@@ -119,20 +157,25 @@ init_keyring(void)
 	}
 }
 
+/* 
+ * Keys are created during the cluster start only, so no locks needed here.
+ */
 static void
-create_gl_catalog_key(void)
+init_gl_catalog_keys(void)
 {
 	InternalKey		int_key;
 	RelKeyData		*rel_key_data;
 	RelKeyData		*enc_rel_key_data;
-	RelFileLocator	*rlocator = &GLOBAL_SPACE_RLOCATOR(XLOG_TDE_OID);
-	TDEMasterKey 	*master_key;
+	RelFileLocator	*rlocator;
+	TDEMasterKey 	*mkey;
 
-    master_key = create_key("xlog-master-key", EncryptionState->keyring, 
-									rlocator->dbOid, rlocator->spcOid, false);
+    mkey = create_master_key("global-catalog-master-key",
+									EncryptionState->keyring, 
+									GLOBAL_DATA_TDE_OID, GLOBALTABLESPACE_OID, false);
 
 	memset(&int_key, 0, sizeof(InternalKey));
 
+	/* Create and store an internal key for XLog */
 	if (!RAND_bytes(int_key.key, INTERNAL_KEY_LEN))
 	{
 		ereport(FATAL,
@@ -141,47 +184,20 @@ create_gl_catalog_key(void)
                 		ERR_error_string(ERR_get_error(), NULL))));
 	}
 
-	rel_key_data = tde_create_rel_key(rlocator->relNumber, &int_key, &master_key->keyInfo);
-	enc_rel_key_data = tde_encrypt_rel_key(master_key, rel_key_data, rlocator);
+	rlocator = &GLOBAL_SPACE_RLOCATOR(XLOG_TDE_OID);
+	rel_key_data = tde_create_rel_key(rlocator->relNumber, &int_key, &mkey->keyInfo);
+	enc_rel_key_data = tde_encrypt_rel_key(mkey, rel_key_data, rlocator);
+	pg_tde_write_key_map_entry(rlocator, enc_rel_key_data, &mkey->keyInfo);
 
-	pg_tde_write_key_map_entry(rlocator, enc_rel_key_data, &master_key->keyInfo);
-
-	push_key_to_cache(master_key);
+	TDEPutGlCatKeyInCache(mkey);
 }
 
 static TDEMasterKey *
-get_key_from_cache(void)
+create_master_key(const char *key_name, GenericKeyring *keyring,
+					Oid dbOid, Oid spcOid, bool ensure_new_key)
 {
-	TDEMasterKey *mkey;
-	
-	mkey = &EncryptionState->master_keys[TDE_GCAT_KEY_XLOG];
-	if (mkey->keyLength == 0)
-		return NULL;
-
-	return mkey;
-}
-
-static inline void
-push_key_to_cache(TDEMasterKey *mkey)
-{
-	memcpy(EncryptionState->master_keys + TDE_GCAT_KEY_XLOG, mkey, sizeof(TDEMasterKey));
-}
-
-/*
- * SetMasterkey:
- * We need to ensure that only one master key is set for a database.
- * To do that we take a little help from cache. Before setting the
- * master key we take an exclusive lock on the cache entry for the
- * database.
- * After acquiring the exclusive lock we check for the entry again
- * to make sure if some other caller has not added a master key for
- * same database while we were waiting for the lock.
- */
-static TDEMasterKey *
-create_key(const char *key_name, GenericKeyring *keyring,
-                            Oid dbOid, Oid spcOid, bool ensure_new_key)
-{
-	TDEMasterKey *masterKey;
+	TDEMasterKey	*masterKey;
+	keyInfo			*keyInfo = NULL;
 
 	masterKey = palloc(sizeof(TDEMasterKey));
 	masterKey->keyInfo.databaseId = dbOid;

@@ -57,8 +57,6 @@ typedef struct EncryptionStateData
 
 } EncryptionStateData;
 
-static EncryptionStateData *EncryptionState = NULL;
-
 /*
  * TDE fork XLog
  */
@@ -149,7 +147,7 @@ pg_tde_rmgr_identify(uint8 info)
  */
 
 void
-xlogInitGUC(void)
+XLogInitGUC(void)
 {
 	DefineCustomBoolVariable("pg_tde.wal_encrypt",	/* name */
 							 "Enable/Disable encryption of WAL.",	/* short_desc */
@@ -181,7 +179,7 @@ XLOGChooseNumBuffers(void)
  * Defines the size of the XLog encryption buffer
  */
 Size
-TDEXLogEncryptBuffSize()
+TDEXLogEncryptBuffSize(void)
 {
 	int		xbuffers;
 
@@ -217,7 +215,7 @@ TDEXLogShmemInit(void)
 }
 
 void
-TDEInitXLogSmgr(void)
+TDEXLogSmgrInit(void)
 {
 	SetXLogSmgr(&tde_xlog_smgr);
 }
@@ -241,14 +239,10 @@ TDEXLogWriteEncryptedPages(int fd, const void *buf, size_t count, off_t offset)
 	size_t	data_size = 0;
 	XLogPageHeader	curr_page_hdr = &EncryptCurrentPageHrd;
 	XLogPageHeader	enc_buf_page;
-	RelKeyData		*key = NULL;
+	RelKeyData		*key = GetGlCatInternalKey(XLOG_TDE_OID);
 	off_t	enc_off;
 	size_t	page_size = XLOG_BLCKSZ - offset % XLOG_BLCKSZ;
 	uint32	iv_ctr = 0;
-
-	pg_tde_init_xlog_kring();
-	key = GetInternalKey(GLOBAL_SPACE_RLOCATOR(XLOG_TDE_OID), xlog_keyring);
-
 
 #ifdef TDE_XLOG_DEBUG
 	elog(DEBUG1, "write encrypted WAL, pages amount: %d, size: %lu offset: %ld", count / (Size) XLOG_BLCKSZ, count, offset);
@@ -332,7 +326,7 @@ pg_tde_xlog_seg_read(int fd, void *buf, size_t count, off_t offset)
 	char	iv_prefix[16] = {0,};
 	size_t	data_size = 0;
 	XLogPageHeader	curr_page_hdr = &DecryptCurrentPageHrd;
-	RelKeyData		*key = NULL;
+	RelKeyData		*key = GetGlCatInternalKey(XLOG_TDE_OID);
 	size_t	page_size = XLOG_BLCKSZ - offset % XLOG_BLCKSZ;
 	off_t	dec_off;
 	uint32	iv_ctr = 0;
@@ -340,8 +334,6 @@ pg_tde_xlog_seg_read(int fd, void *buf, size_t count, off_t offset)
 #ifdef TDE_XLOG_DEBUG
 	elog(DEBUG1, "read from a WAL segment, pages amount: %d, size: %lu offset: %ld", count / (Size) XLOG_BLCKSZ, count, offset);
 #endif
-
-	key = GetInternalKey(GLOBAL_SPACE_RLOCATOR(XLOG_TDE_OID), xlog_keyring);
 
 	readsz = pg_pread(fd, buf, count, offset);
 

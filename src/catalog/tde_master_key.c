@@ -29,8 +29,7 @@
 #include <sys/time.h>
 
 #include "access/pg_tde_tdemap.h"
-
-#define DEFAULT_MASTER_KEY_VERSION      1
+#include "catalog/tde_global_catalog.h"
 
 typedef struct TdeMasterKeySharedState
 {
@@ -67,7 +66,6 @@ static Size required_shared_mem_size(void);
 static int  required_locks_count(void);
 static void shared_memory_shutdown(int code, Datum arg);
 static void master_key_startup_cleanup(int tde_tbl_count, void *arg);
-static keyInfo *load_latest_versioned_key_name(TDEMasterKeyInfo *mastere_key_info, GenericKeyring *keyring, bool ensure_new_key);
 static void clear_master_key_cache(Oid databaseId, Oid tablespaceId) ;
 static inline dshash_table *get_master_key_Hash(void);
 static TDEMasterKey *get_master_key_from_cache(Oid dbOid);
@@ -236,7 +234,11 @@ GetMasterKey(Oid dbOid, Oid spcOid, GenericKeyring *keyring)
     LWLockAcquire(lock_files, LW_SHARED);
     LWLockAcquire(lock_cache, LW_EXCLUSIVE);
 
-    masterKey = get_master_key_from_cache(dbOid);
+    /* Global catalog has its own cache */
+    if (spcOid == GLOBALTABLESPACE_OID)
+        masterKey = TDEGetGlCatKeyFromCache();
+    else 
+        masterKey = get_master_key_from_cache(dbOid);
 
     if (masterKey)
     {
@@ -289,7 +291,10 @@ GetMasterKey(Oid dbOid, Oid spcOid, GenericKeyring *keyring)
     masterKey->keyLength = keyInfo->data.len;
 
     Assert(MyDatabaseId == masterKey->keyInfo.databaseId);
-    push_master_key_to_cache(masterKey);
+    if (spcOid == GLOBALTABLESPACE_OID)
+        TDEPutGlCatKeyInCache(masterKey);
+    else 
+        push_master_key_to_cache(masterKey);
 
     /* Release the exclusive locks here */
     LWLockRelease(lock_cache);
@@ -470,7 +475,7 @@ xl_tde_perform_rotate_key(XLogMasterKeyRotate *xlrec)
 * If ensure_new_key is true, then we will keep on incrementing the version number
 * till we get a key name that is not present in the keyring
 */
-static keyInfo *
+keyInfo *
 load_latest_versioned_key_name(TDEMasterKeyInfo *mastere_key_info, GenericKeyring *keyring, bool ensure_new_key)
 {
     KeyringReturnCodes kr_ret;
