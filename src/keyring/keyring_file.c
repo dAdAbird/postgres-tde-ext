@@ -18,6 +18,7 @@
 #include "keyring/keyring_api.h"
 #include "storage/fd.h"
 #include "utils/wait_event.h"
+#include "pg_tde_fe.h"
 #include <stdio.h>
 #include <unistd.h>
 

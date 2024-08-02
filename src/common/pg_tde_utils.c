@@ -12,8 +12,11 @@
 #define MAX_CONFIG_FILE_DATA_LENGTH 1024
 
 #include "postgres.h"
+#ifndef FRONTEND
 #include "access/genam.h"
 #include "access/heapam.h"
+#endif
+#include "pg_tde_fe.h"
 #include "access/htup_details.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_am.h"
@@ -28,6 +31,7 @@
 #include "utils/builtins.h"
 #include "unistd.h"
 
+#ifndef FRONTEND
 Oid
 get_tde_basic_table_am_oid(void)
 {
@@ -90,6 +94,7 @@ get_tde_tables_count(void)
     return count;
 }
 
+#endif /* FRONTEND */
 
 const char *
 extract_json_cstr(Datum json, const char* field_name)

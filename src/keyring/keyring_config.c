@@ -1,4 +1,4 @@
-
+#include "pg_tde_fe.h"
 #include "keyring/keyring_config.h"
 #include "keyring/keyring_file.h"
 #include "keyring/keyring_vault.h"

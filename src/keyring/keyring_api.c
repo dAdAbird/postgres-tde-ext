@@ -1,10 +1,12 @@
 
+#include "postgres.h"
+
+#include "pg_tde_fe.h"
 #include "keyring/keyring_api.h"
 #include "keyring/keyring_file.h"
 #include "keyring/keyring_vault.h"
 #include "keyring/keyring_config.h"
 
-#include "postgres.h"
 #include "access/xlog.h"
 #include "storage/shmem.h"
 #include "nodes/pg_list.h"

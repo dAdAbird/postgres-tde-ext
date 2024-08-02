@@ -15,7 +15,9 @@
 #include "catalog/tde_keyring.h"
 #include "keyring/keyring_api.h"
 #include "nodes/pg_list.h"
+#ifndef FRONTEND
 #include "storage/lwlock.h"
+#endif
 
 #define DEFAULT_PRINCIPAL_KEY_VERSION      1
 #define PRINCIPAL_KEY_NAME_LEN TDE_KEY_NAME_LEN
@@ -57,8 +59,11 @@ typedef struct XLogPrincipalKeyRotate
 
 extern void InitializePrincipalKeyInfo(void);
 extern void cleanup_principal_key_info(Oid databaseId, Oid tablespaceId);
+
+#ifndef FRONTEND
 extern LWLock *tde_lwlock_mk_files(void);
 extern LWLock *tde_lwlock_mk_cache(void);
+#endif
 
 extern bool save_principal_key_info(TDEPrincipalKeyInfo *principalKeyInfo);
 

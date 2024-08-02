@@ -20,6 +20,7 @@
 #include "storage/shmem.h"
 #include "access/pg_tde_ddl.h"
 #include "access/pg_tde_xlog.h"
+#include "access/pg_tde_xlog_encrypt.h"
 #include "encryption/enc_aes.h"
 #include "access/pg_tde_tdemap.h"
 #include "access/xlog.h"

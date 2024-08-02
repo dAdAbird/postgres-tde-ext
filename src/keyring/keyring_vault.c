@@ -11,6 +11,7 @@
 
 #include "postgres.h"
 
+#include "pg_tde_fe.h"
 #include "keyring/keyring_vault.h"
 #include "keyring/keyring_config.h"
 #include "keyring/keyring_curl.h"
@@ -213,12 +214,15 @@ get_key_by_name(GenericKeyring *keyring, const char *key_name, bool throw_error,
 		goto cleanup;
 	}
 
+#ifndef FRONTEND
 	PG_TRY();
 	{
+#endif
 		dataJson = DirectFunctionCall2(json_object_field_text, CStringGetTextDatum(str.ptr), CStringGetTextDatum("data"));
 		data2Json = DirectFunctionCall2(json_object_field_text, dataJson, CStringGetTextDatum("data"));
 		keyJson = DirectFunctionCall2(json_object_field_text, data2Json, CStringGetTextDatum("key"));
 		responseKey = TextDatumGetCString(keyJson);
+#ifndef FRONTEND
 	}
 	PG_CATCH();
 	{
@@ -229,6 +233,7 @@ get_key_by_name(GenericKeyring *keyring, const char *key_name, bool throw_error,
 		goto cleanup;
 	}
 	PG_END_TRY();
+#endif /* FRONTEND */
 
 #if KEYRING_DEBUG
 	elog(DEBUG1, "Retrieved base64 key: %s", response_key);

@@ -11,6 +11,7 @@
 
 #include "keyring/keyring_curl.h"
 #include "keyring/keyring_config.h"
+#include "pg_tde_fe.h"
 #include "pg_tde_defines.h"
 
 CURL* keyringCurl = NULL;

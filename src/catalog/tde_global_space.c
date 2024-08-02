@@ -15,15 +15,12 @@
 #ifdef PERCONA_FORK
 
 #include "catalog/pg_tablespace_d.h"
-#include "nodes/pg_list.h"
-#include "storage/shmem.h"
-#include "utils/guc.h"
 #include "utils/memutils.h"
+#include "common/logging.h"
 
 #include "access/pg_tde_tdemap.h"
 #include "catalog/tde_global_space.h"
 #include "catalog/tde_keyring.h"
-#include "catalog/tde_principal_key.h"
 
 #include <openssl/rand.h>
 #include <openssl/err.h>
@@ -48,17 +45,21 @@ typedef enum
  * the principal key.
  */
 static RelKeyData * internal_keys_cache = NULL;
+static void cache_internal_key(RelKeyData * ikey, InternalKeyType type);
 
+#ifndef FRONTEND
 static void init_keys(void);
 static void init_default_keyring(void);
 static TDEPrincipalKey * create_principal_key(const char *key_name,
 											  GenericKeyring * keyring, Oid dbOid,
 											  Oid spcOid);
-static void cache_internal_key(RelKeyData * ikey, InternalKeyType type);
+#endif		/* FRONTEND */
+
 
 void
 TDEInitGlobalKeys(void)
 {
+#ifndef FRONTEND
 	char		db_map_path[MAXPGPATH] = {0};
 
 	pg_tde_set_db_file_paths(&GLOBAL_SPACE_RLOCATOR(XLOG_TDE_OID),
@@ -69,6 +70,7 @@ TDEInitGlobalKeys(void)
 		init_keys();
 	}
 	else
+#endif		/* FRONTEND */
 	{
 		RelKeyData *ikey;
 
@@ -90,9 +92,18 @@ cache_internal_key(RelKeyData * ikey, InternalKeyType type)
 {
 	if (internal_keys_cache == NULL)
 	{
+#ifndef FRONTEND
+	    MemoryContext oldcontext;
+
+	    oldcontext = MemoryContextSwitchTo(TopMemoryContext);
+#endif
+
 		internal_keys_cache =
-			(RelKeyData *) MemoryContextAlloc(TopMemoryContext,
-											  sizeof(RelKeyData) * TDE_INTERNAL_KEYS_COUNT);
+			(RelKeyData *) palloc(sizeof(RelKeyData) * TDE_INTERNAL_KEYS_COUNT);
+
+#ifndef FRONTEND
+    	MemoryContextSwitchTo(oldcontext);
+#endif
 	}
 	memcpy(internal_keys_cache + type, ikey, sizeof(RelKeyData));
 }
@@ -110,10 +121,17 @@ TDEGetGlobalInternalKey(Oid obj_id)
 			ktype = TDE_INTERNAL_XLOG_KEY;
 			break;
 		default:
+#ifndef FRONTEND
 			elog(ERROR, "unknown internal key for Oid %u", obj_id);
+#else
+			pg_log_error("unknown internal key for Oid %u", obj_id);
+#endif		/* FRONTEND */
+
 	}
 	return internal_keys_cache + ktype;
 }
+
+#ifndef FRONTEND
 
 static void
 init_default_keyring(void)
@@ -223,4 +241,6 @@ create_principal_key(const char *key_name, GenericKeyring * keyring,
 
 	return principalKey;
 }
+#endif		/* FRONTEND */
+
 #endif							/* PERCONA_FORK */
