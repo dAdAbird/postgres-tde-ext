@@ -21,10 +21,6 @@
 #include "access/xloginsert.h"
 #include "utils/builtins.h"
 #include "miscadmin.h"
-#ifdef FRONTEND
-#include "common/logging.h"
-#include "common/file_perm.h"
-#endif
 
 #include "access/pg_tde_tdemap.h"
 #include "access/pg_tde_xlog.h"
@@ -39,6 +35,9 @@
 #include <unistd.h>
 
 #include "pg_tde_defines.h"
+#ifdef FRONTEND
+#include "pg_tde_fe.h"
+#endif
 
 /* A useful macro when debugging key encryption/decryption */
 #ifdef DEBUG
@@ -52,66 +51,6 @@
 	elog(INFO, "[%s] INTERNAL KEY => %s", _msg, buf);						\
 }
 #endif
-
-#ifdef FRONTEND
-#define LWLockAcquire(lock, mode) NULL
-#define LWLockRelease(lock_files) NULL
-#define LWLock void
-#define tde_lwlock_mk_files() NULL
-
-static void fe_errmsg(const char *fmt, ...);
-
-/*
- * Error handling
- */
-int fe_error_level = 0;
-
-#define errmsg(...) fe_errmsg(__VA_ARGS__)
-
-#define errcode_for_file_access() NULL
-#define errcode(e) NULL
-
-#define ereport(elevel, ...) pgtde_ereport(elevel, __VA_ARGS__)
-#define pgtde_ereport(elevel, ...)		\
-	do {							\
-		fe_error_level = elevel;	\
-		__VA_ARGS__;				\
-	} while(0)
-
-
-void
-fe_errmsg(const char *fmt, ...)
-{
-	va_list		ap;
-
-	va_start(ap, fmt);
-
-	if (fe_error_level >= ERROR)
-		pg_log_error(fmt, ap);
-	else if (fe_error_level >= WARNING)
-		pg_log_warning(fmt, ap);
-	else if (fe_error_level >= LOG)
-		pg_log_info(fmt, ap);
-	else
-		pg_log_debug(fmt, ap);
-
-	va_end(ap);
-}
-
-char *
-pg_tde_get_tde_file_dir(Oid dbOid, Oid spcOid)
-{
-	/* `dbOid` is set to a value for the XLog keys caching but GetDatabasePath() 
-	 * expects it (`dbOid`) to be `0` if this is a global space.
-	 */
-	if (spcOid == GLOBALTABLESPACE_OID)
-		return pstrdup("global");
-	return GetDatabasePath(dbOid, spcOid);
-}
-
-#define BasicOpenFile(fname, flags) open(fname, flags, PG_FILE_MODE_OWNER)
-
-#endif		/* FRONTEND */
 
 #define PG_TDE_MAP_FILENAME				"pg_tde.map"
 #define PG_TDE_KEYDATA_FILENAME			"pg_tde.dat"

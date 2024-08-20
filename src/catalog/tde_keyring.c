@@ -26,8 +26,8 @@
 #include "utils/builtins.h"
 #include "pg_tde.h"
 #ifdef FRONTEND
-#include "common/logging.h"
-#include "common/file_perm.h"
+#include "pg_tde_fe.h"
+#include "fe_utils/simple_list.h"
 #else
 #include "access/heapam.h"
 #include "common/pg_tde_shmem.h"
@@ -37,116 +37,6 @@
 #include "catalog/namespace.h"
 #include "executor/spi.h"
 #endif
-
-
-#ifdef FRONTEND
-#define LWLockAcquire(lock, mode) NULL
-#define LWLockRelease(lock_files) NULL
-#define LWLock void
-#define tde_lwlock_mk_files() NULL
-#define tde_lwlock_mk_cache() NULL
-#define tde_provider_info_lock() NULL
-
-/*
- * Error handling
- */
-static void fe_errmsg(const char *fmt, ...);
-static void fe_errhint(const char *fmt, ...);
-static void fe_errdetail(const char *fmt, ...);
-
-int fe_error_level = 0;
-
-#define errmsg(...) fe_errmsg(__VA_ARGS__)
-#define errhint(...) fe_errhint(__VA_ARGS__)
-#define errdetail(...) fe_errdetail(__VA_ARGS__)
-
-#define errcode_for_file_access() NULL
-#define errcode(e) NULL
-
-#define elog(elevel, ...) pgtde_elog(elevel, __VA_ARGS__)
-#define pgtde_elog(elevel, ...) \
-	do {							\
-		fe_error_level = elevel;	\
-		fe_errmsg(__VA_ARGS__);		\
-	} while(0)
-
-#define ereport(elevel, ...) pgtde_ereport(elevel, __VA_ARGS__)
-#define pgtde_ereport(elevel, ...)		\
-	do {							\
-		fe_error_level = elevel;	\
-		__VA_ARGS__;				\
-	} while(0)
-
-void
-fe_errmsg(const char *fmt, ...)
-{
-	va_list		ap;
-
-	va_start(ap, fmt);
-
-	if (fe_error_level >= ERROR)
-		pg_log_error(fmt, ap);
-	else if (fe_error_level >= WARNING)
-		pg_log_warning(fmt, ap);
-	else if (fe_error_level >= LOG)
-		pg_log_info(fmt, ap);
-	else
-		pg_log_debug(fmt, ap);
-
-	va_end(ap);
-}
-
-void
-fe_errhint(const char *fmt, ...)
-{
-	va_list		ap;
-
-	va_start(ap, fmt);
-
-	if (fe_error_level >= ERROR)
-		pg_log_error_hint(fmt, ap);
-	else if (fe_error_level >= WARNING)
-		pg_log_warning_hint(fmt, ap);
-	else if (fe_error_level >= LOG)
-		pg_log_info_hint(fmt, ap);
-	else
-		pg_log_debug_hint(fmt, ap);
-
-	va_end(ap);
-}
-void
-fe_errdetail(const char *fmt, ...)
-{
-	va_list		ap;
-
-	va_start(ap, fmt);
-
-	if (fe_error_level >= ERROR)
-		pg_log_error_detail(fmt, ap);
-	else if (fe_error_level >= WARNING)
-		pg_log_warning_detail(fmt, ap);
-	else if (fe_error_level >= LOG)
-		pg_log_info_detail(fmt, ap);
-	else
-		pg_log_debug_detail(fmt, ap);
-
-	va_end(ap);
-}
-
-char *
-pg_tde_get_tde_file_dir(Oid dbOid, Oid spcOid)
-{
-	/* `dbOid` is set to a value for the XLog keys caching but GetDatabasePath() 
-	 * expects it (`dbOid`) to be `0` if this is a global space.
-	 */
-	if (spcOid == GLOBALTABLESPACE_OID)
-		return pstrdup("global");
-	return GetDatabasePath(dbOid, spcOid);
-}
-
-#define BasicOpenFile(fname, flags) open(fname, flags, PG_FILE_MODE_OWNER)
-
-#endif		/* FRONTEND */
 
 PG_FUNCTION_INFO_V1(pg_tde_add_key_provider_internal);
 Datum pg_tde_add_key_provider_internal(PG_FUNCTION_ARGS);
@@ -180,7 +70,12 @@ typedef enum ProviderScanType
 	PROVIDER_SCAN_ALL
 } ProviderScanType;
 
+#ifndef FRONTEND
 static List *scan_key_provider_file(ProviderScanType scanType, void *scanKey, Oid dbOid, Oid spcOid);
+#else
+static SimplePtrList *scan_key_provider_file(ProviderScanType scanType, void *scanKey, Oid dbOid, Oid spcOid);
+static void simple_list_free(SimplePtrList *list);
+#endif
 
 static FileKeyring *load_file_keyring_provider_options(Datum keyring_options);
 static GenericKeyring *load_keyring_provider_options(ProviderType provider_type, Datum keyring_options);
@@ -280,25 +175,6 @@ get_keyring_provider_typename(ProviderType p_type)
 		break;
 	}
 	return NULL;
-}
-
-static GenericKeyring *load_keyring_provider_from_record(KeyringProvideRecord *provider)
-{
-	Datum option_datum;
-	GenericKeyring *keyring = NULL;
-
-	option_datum = CStringGetTextDatum(provider->options);
-
-	keyring = load_keyring_provider_options(provider->provider_type, option_datum);
-	if (keyring)
-	{
-		keyring->key_id = provider->provider_id;
-		strncpy(keyring->provider_name, provider->provider_name, sizeof(keyring->provider_name));
-		keyring->type = provider->provider_type;
-		strncpy(keyring->options, provider->options, sizeof(keyring->options));
-		debug_print_kerying(keyring);
-	}
-	return keyring;
 }
 
 List *
@@ -526,8 +402,6 @@ pg_tde_list_all_key_providers(PG_FUNCTION_ARGS)
 	list_free_deep(all_providers);
 	return (Datum)0;
 }
-#endif		/* FRONTEND */
-
 
 GenericKeyring *
 GetKeyProviderByID(int provider_id, Oid dbOid, Oid spcOid)
@@ -541,19 +415,58 @@ GetKeyProviderByID(int provider_id, Oid dbOid, Oid spcOid)
 	}
 	return keyring;
 }
+#else
+
+static void
+simple_list_free(SimplePtrList *list)
+{
+	SimplePtrListCell *cell;
+
+	cell = list->head;
+	while (cell != NULL)
+	{
+		SimplePtrListCell *next;
+
+		next = cell->next;
+		pg_free(cell);
+		cell = next;
+	}
+}
+
+GenericKeyring *
+GetKeyProviderByID(int provider_id, Oid dbOid, Oid spcOid)
+{
+	GenericKeyring *keyring = NULL;
+	SimplePtrList *providers = scan_key_provider_file(PROVIDER_SCAN_BY_ID, &provider_id, dbOid, spcOid);
+	if (providers != NIL)
+	{
+		keyring = (GenericKeyring *) providers->head->ptr;
+		simple_list_free(providers);
+	}
+	return keyring;
+}
+#endif		/* FRONTEND */
 
 
 /*
 	* Scan the key provider info file and can also apply filter based on scanType
 	*/
-static List *scan_key_provider_file(ProviderScanType scanType, void *scanKey, Oid dbOid, Oid spcOid)
+#ifndef FRONTEND
+static List *
+#else
+static SimplePtrList *
+#endif
+scan_key_provider_file(ProviderScanType scanType, void *scanKey, Oid dbOid, Oid spcOid)
 {
 	off_t curr_pos = 0;
 	int fd;
 	char kp_info_path[MAXPGPATH] = {0};
 	KeyringProvideRecord provider;
+#ifndef FRONTEND
 	List *providers_list = NIL;
-
+#else
+	SimplePtrList *providers_list = NULL;
+#endif
 	if (scanType != PROVIDER_SCAN_ALL)
 		Assert(scanKey != NULL);
 
@@ -599,7 +512,11 @@ static List *scan_key_provider_file(ProviderScanType scanType, void *scanKey, Oi
 			GenericKeyring *keyring = load_keyring_provider_from_record(&provider);
 			if (keyring)
 			{
+#ifndef FRONTEND
 				providers_list = lappend(providers_list, keyring);
+#else
+				simple_ptr_list_append(providers_list, keyring);
+#endif
 			}
 		}
 	}
