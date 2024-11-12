@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="The packages for pg_tde Beta are available in the testing repository for Percona Distribution for PostgreSQL 16.">
+        <meta name="description" content="The packages for the tech preview pg_tde are available in the experimental repository for Percona Distribution for PostgreSQL 17.">
       
       
         <meta name="author" content="Percona LLC">
@@ -20,7 +20,7 @@
       
       
       <link rel="icon" href="_images/postgresql-fav.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.41">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.44">
     
     
       
@@ -135,7 +135,7 @@
             
             
   This is a Beta version of Percona Transparent Encryption extension and it is 
-  <strong>not recommended for production environments</strong> yet. We encourage you to test it and give your feedback.
+  <strong>not recommended for production environments</strong> yet. We encourage you to test it and <a href= "https://forums.percona.com/c/postgresql/pg-tde-transparent-data-encryption-tde/82">give your feedback</a>.
   This will help us improve the product and make it production-ready faster.
 
           </div>
@@ -192,7 +192,7 @@
             <path d="m7.825 13 5.6 5.6L12 20l-8-8 8-8 1.425 1.4-5.6 5.6H20v2H7.825Z"/>
           </g>
         </svg>
-        <span>Percona Documentation</span>
+        <span>Percona Software for PostgreSQL Documentation</span>
       </a>
     </div>
   </div>
@@ -1010,7 +1010,6 @@
 
 
 <h1 id="install-pg_tde-on-red-hat-enterprise-linux-and-derivatives">Install <code>pg_tde</code> on Red Hat Enterprise Linux and derivatives<a class="headerlink" href="#install-pg_tde-on-red-hat-enterprise-linux-and-derivatives" title="Permanent link">&para;</a></h1>
-<p>The packages for <code>pg_tde</code> Beta are available in the testing repository for Percona Distribution for PostgreSQL 16. </p>
 <p>The packages for the tech preview <code>pg_tde</code> are available in the experimental repository for Percona Distribution for PostgreSQL 17. </p>
 <p>Check the <a href="install.html#__tabbed_1_2">list of supported platforms</a>.</p>
 <p>This tutorial shows how to install <code>pg_tde</code> with <a href="https://docs.percona.com/postgresql/latest/index.html">Percona Distribution for PostgreSQL</a>.</p>
@@ -1029,43 +1028,15 @@
 </li>
 <li>
 <p>Enable the repository</p>
-<p>Enable the Percona Distribution for PostgreSQL repository</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">pg_tde Beta</label><label for="__tabbed_1_2">pg_tde Tech preview</label></div>
-<div class="tabbed-content">
-<div class="tabbed-block">
-<div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>percona-release<span class="w"> </span>enable-only<span class="w"> </span>ppg-16.4<span class="w"> </span>testing
-</code></pre></div>
-</div>
-<div class="tabbed-block">
 <div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>percona-release<span class="w"> </span>enable-only<span class="w"> </span>ppg-17.0<span class="w"> </span>experimental
 </code></pre></div>
-</div>
-</div>
-</div>
 </li>
 </ol>
 <h2 id="install-pg_tde">Install <code>pg_tde</code><a class="headerlink" href="#install-pg_tde" title="Permanent link">&para;</a></h2>
-<div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">pg_tde Beta</label><label for="__tabbed_2_2">pg_tde Tech preview</label></div>
-<div class="tabbed-content">
-<div class="tabbed-block">
 <ol>
 <li>
-<p>Install Percona Distribution for PostgreSQL 16 and the required packages, run the following command:</p>
-<div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>yum<span class="w"> </span>-y<span class="w"> </span>install<span class="w"> </span>percona-postgresql-client-common<span class="w"> </span>percona-postgresql-common<span class="w">         </span>percona-postgresql-server-dev-all<span class="w"> </span>percona-postgresql16<span class="w"> </span>percona-postgresql16-contrib<span class="w">         </span>percona-postgresql16-devel<span class="w"> </span>percona-postgresql16-libs
-</code></pre></div>
-</li>
-<li>
-<p>Install <code>pg_tde</code> packages</p>
-<div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>yum<span class="w"> </span>install<span class="w"> </span>percona-pg_tde_16
-</code></pre></div>
-</li>
-</ol>
-</div>
-<div class="tabbed-block">
-<ol>
-<li>
-<p>Install Percona Distribution for PostgreSQL 16 and the required packages, run the following command:</p>
-<div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>yum<span class="w"> </span>-y<span class="w"> </span>install<span class="w"> </span>percona-postgresql-client-common<span class="w"> </span>percona-postgresql-common<span class="w">         </span>percona-postgresql-server-dev-all<span class="w"> </span>percona-postgresql17<span class="w"> </span>percona-postgresql17-contrib<span class="w">         </span>percona-postgresql17-devel<span class="w"> </span>percona-postgresql17-libs
+<p>Install Percona Distribution for PostgreSQL 17 and the required packages, run the following command:</p>
+<div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>yum<span class="w"> </span>-y<span class="w"> </span>install<span class="w"> </span>percona-postgresql-client-common<span class="w"> </span>percona-postgresql-common<span class="w"> </span>percona-postgresql-server-dev-all<span class="w"> </span>percona-postgresql17<span class="w"> </span>percona-postgresql17-contrib<span class="w"> </span>percona-postgresql17-devel<span class="w"> </span>percona-postgresql17-libs
 </code></pre></div>
 </li>
 <li>
@@ -1074,9 +1045,6 @@
 </code></pre></div>
 </li>
 </ol>
-</div>
-</div>
-</div>
 <h2 id="next-steps">Next steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <p><a class="md-button" href="setup.html">Setup</a></p>
 <div data-banner="data-banner">
@@ -1084,7 +1052,7 @@
 <h2 class="title" id="get-expert-help">Get expert help<a class="headerlink" href="#get-expert-help" title="Permanent link">&para;</a></h2>
 <p>If you need assistance, visit the community forum for comprehensive and free database knowledge, or contact our Percona Database Experts for professional support and services.</p>
 <div class="actions">
-<p><a href="https://forums.percona.com/c/postgresql/25?utm_campaign=Doc%20pages"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M15 4v7H5.17L4 12.17V4zm1-2H3a1 1 0 0 0-1 1v14l4-4h10a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1m5 4h-2v9H6v2a1 1 0 0 0 1 1h11l4 4V7a1 1 0 0 0-1-1"/></svg></span> Community Forum</a> <a href="https://www.percona.com/about/contact"><span class="twemoji"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<p><a href="https://forums.percona.com/c/postgresql/pg-tde-transparent-data-encryption-tde/82"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M15 4v7H5.17L4 12.17V4zm1-2H3a1 1 0 0 0-1 1v14l4-4h10a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1m5 4h-2v9H6v2a1 1 0 0 0 1 1h11l4 4V7a1 1 0 0 0-1-1"/></svg></span> Community Forum</a> <a href="https://www.percona.com/about/contact"><span class="twemoji"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
     <path d="M19.3996 14.148C21.9082 12.5083 22.7289 9.16368 21.2109 6.53493C20.4502 5.21636 19.2207 4.27206 17.7497 3.87776C16.3868 3.51187 14.9634 3.6615 13.7106 4.29444L12 1.33337L8.44934 7.48295L0.242432 21.6959H23.7576L19.3996 14.148ZM17.3474 5.38416C18.4167 5.66894 19.3064 6.35548 19.8606 7.31143C20.9499 9.19582 20.384 11.5859 18.6176 12.7931L14.4917 5.64797C15.3806 5.22055 16.3831 5.12734 17.3474 5.38416ZM12 4.45432L21.0533 20.135H15.7562L9.35029 9.04341L11.9995 4.45478L12 4.45432ZM2.94667 20.135L8.44888 10.6071L13.9511 20.135H2.94667Z"/>
 </svg></span> Get a Percona Expert</a></p>
 <p><a class="glightbox" href="https://static.scarf.sh/a.png?x-pxid=b95a2b04-c5c7-47f9-bb4e-b7fc13c3ab0d" data-type="image" data-width="auto" data-height="auto" data-desc-position="bottom"><img referrerpolicy="no-referrer-when-downgrade" src="https://static.scarf.sh/a.png?x-pxid=b95a2b04-c5c7-47f9-bb4e-b7fc13c3ab0d" /></a></p>
@@ -1112,7 +1080,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date">October 8, 2024</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date">November 8, 2024</span>
   </span>
 
     
